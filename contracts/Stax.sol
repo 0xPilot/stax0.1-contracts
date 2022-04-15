@@ -56,7 +56,7 @@ contract Stax is Ownable {
 
 
 
-    // TODO: temple rewards logic
+    // TODO: (pb) temple rewards logic
 
 
 
