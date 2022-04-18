@@ -5,6 +5,7 @@ pragma solidity ^0.8.4;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+
 interface IUnifiedFarm {
     function stakeLocked(uint256 liquidity, uint256 secs) external;
     function getReward(address destination_address) external returns (uint256[] memory);
@@ -57,6 +58,13 @@ contract LPLocker {
         lpFarm = _lpFarm;
     }
 
+    // in the event we upgrade the operator
+    function setOperator(address _operator) external {
+        require(msg.sender == operator, "only operator");
+        require(_operator != address(0), "address 0");
+        operator = _operator;
+    }
+
     // lock liquidity for user
     function lock(uint256 _liquidity, uint256 _secs) external {
         require(msg.sender == operator, "only operator");
@@ -104,5 +112,4 @@ contract LPLocker {
 
         emit SetVeFXSProxy(user, proxyAddress);
     }
-
 }
