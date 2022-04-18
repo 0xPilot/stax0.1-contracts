@@ -1,12 +1,17 @@
 pragma solidity ^0.8.4;
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IUnifiedFarm {
     function stakeLocked(uint256 liquidity, uint256 secs) external;
     function getReward(address destination_address) external returns (uint256[] memory);
     function withdrawLocked(bytes32 kek_id, address destination_address) external;
+    function lockAdditional(bytes32 kek_id, uint256 addl_liq) external;
+    function proxyToggleStaker(address staker_address) external;
+    function stakerSetVeFXSProxy(address proxy_address) external;
 }
 
 
@@ -15,50 +20,72 @@ interface IUnifiedFarm {
 // most view functions will also be delegated to stax contract
 contract LPLocker {
 
+    using SafeERC20 for IERC20;
+
     address public factory;
     address public user;
     address public operator; // stax contract
-    address public lpFarm = 0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16; // TEMPLE/FRAX LP farm.
+    address public lpFarm; // TEMPLE/FRAX LP farm.
     address public lpToken; // TEMPLE/FRAX LP
 
     bool private isInitialized;
 
-    // TODO: (pb) events
+    event UserLockInitialized(address user);
+    event LockedFor(address user, uint256 amount);
+    event LockedAdditionalFor(bytes32 kekId, address user, uint256 amount);
+    event RewardsClaimedFor(address user, uint256[] rewardsBefore);
+    event WithdrawLockedFor(address user, bytes32 kekId);
+    event SetVeFXSProxy(address user, address proxy);
 
-    function init(address _user, address _operator) external {
+
+    function init(address _user, address _operator, address _lpFarm, address _lpToken) external {
         require(!isInitialized, "already initialized");
 
         isInitialized = true;
         user = _user;
         factory = msg.sender;
         operator = _operator;
+        lpFarm = _lpFarm;
+        lpToken = _lpToken;
+
+        emit UserLockInitialized(_user);
     }
 
-    // TODO: (pb) set lp farm in case of migration
-    function setLPFarm() external {
+    // set lp farm in case of migration
+    function setLPFarm(address _lpFarm) external {
         require(msg.sender == operator, "only operator");
-
+        lpFarm = _lpFarm;
     }
 
-    // TODO: (pb) lock liquidity for user
-    // maybe allow user to also directly lock and account for logic in main stax contract????????
+    // lock liquidity for user
     function lock(uint256 _liquidity, uint256 _secs) external {
         require(msg.sender == operator, "only operator");
-        // safeIncreaseAllowance
+        // pull tokens and update allowance
+        IERC20(lpToken).safeTransferFrom(user, address(this), _liquidity);
+        IERC20(lpToken).safeIncreaseAllowance(lpFarm, _liquidity);
         IUnifiedFarm(lpFarm).stakeLocked(_liquidity, _secs);
+
+        emit LockedFor(user, _liquidity);
     }
 
-    // TODO: (pb) lock additional liquidity for user
+    // lock additional liquidity for user
     // safeTransfer liqudiity directly to contract from user. 2 transfers compared to if transfer came from stax
     function lockAddtional(bytes32 _kekId, uint256 _liquidity) external {
         require(msg.sender == operator, "only operator");
-        // safeIncreaseAllowance
+        // pull tokens and update allowance
+        IERC20(lpToken).safeTransferFrom(user, address(this), _liquidity);
+        IERC20(lpToken).safeIncreaseAllowance(lpFarm, _liquidity);
+        IUnifiedFarm(lpFarm).lockAdditional(_kekId, _liquidity);
+
+        emit LockedAdditionalFor(_kekId, user, _liquidity);
     }
 
     // withdraw and send directly to user to save gas
     function withdrawLocked(bytes32 _kekId) external {
         require(msg.sender == operator, "only operator");
-        IUnifiedFarm(lpFarm).withdrawLocked(_kekId, user);
+        IUnifiedFarm(lpFarm).withdrawLocked(_kekId, user); 
+
+        emit WithdrawLockedFor(user, _kekId);
     }
 
     // get reward. should user be allowed to call this? can user game if so? TODO: (pb) check with stax logic
@@ -66,9 +93,16 @@ contract LPLocker {
     function getReward() external returns (uint256[] memory data) {
         require(msg.sender == operator, "only operator");
         data = IUnifiedFarm(lpFarm).getReward(user);
+
+        emit RewardsClaimedFor(user, data);
     }
 
-    function migrate() external {
-        // TODO: (pb)
+    // Staker can allow a veFXS proxy (the proxy will have to toggle them first)
+    function setVeFXSProxy(address proxyAddress) external {
+        require(msg.sender == operator, "only operator");
+        IUnifiedFarm(lpFarm).stakerSetVeFXSProxy(proxyAddress);
+
+        emit SetVeFXSProxy(user, proxyAddress);
     }
+
 }
