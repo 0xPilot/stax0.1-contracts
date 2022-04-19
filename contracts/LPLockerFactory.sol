@@ -17,7 +17,7 @@ contract LPLockerFactory {
     address public lpToken;
 
     /** @notice Emits locker address */
-    event LockerCreated(address locker);
+    event LockerCreated(address user, address locker);
 
     constructor(address _operator, address _implementation, address _lpFarm, address _lpToken) {
         operator = _operator;
@@ -42,7 +42,7 @@ contract LPLockerFactory {
         require(msg.sender == operator, "only operator");
         address instance = Clones.clone(implementation);
         ILPLocker(instance).init(_user, operator, lpFarm, lpToken);
-        emit LockerCreated(instance);
+        emit LockerCreated(_user, instance);
 
         return instance;
     }

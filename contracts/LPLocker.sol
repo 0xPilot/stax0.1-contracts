@@ -13,6 +13,7 @@ interface IUnifiedFarm {
     function lockAdditional(bytes32 kek_id, uint256 addl_liq) external;
     function proxyToggleStaker(address staker_address) external;
     function stakerSetVeFXSProxy(address proxy_address) external;
+    function stakerToggleMigrator(address migrator_address) external;
 }
 
 
@@ -37,6 +38,7 @@ contract LPLocker {
     event RewardsClaimedFor(address user, uint256[] rewardsBefore);
     event WithdrawLockedFor(address user, bytes32 kekId);
     event SetVeFXSProxy(address user, address proxy);
+    event MigratorToggled(address migrator);
 
 
     function init(address _user, address _operator, address _lpFarm, address _lpToken) external {
@@ -111,5 +113,13 @@ contract LPLocker {
         IUnifiedFarm(lpFarm).stakerSetVeFXSProxy(proxyAddress);
 
         emit SetVeFXSProxy(user, proxyAddress);
+    }
+
+    // Stake can allow a migrator
+    function stakerToggleMigrator(address _migrator) external {
+        require(msg.sender == operator, "only operator");
+        IUnifiedFarm(lpFarm).stakerToggleMigrator(_migrator);
+
+        emit MigratorToggled(_migrator);
     }
 }
