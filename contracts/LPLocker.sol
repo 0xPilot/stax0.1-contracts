@@ -33,13 +33,6 @@ contract LPLocker {
     bool private isInitialized;
 
     event UserLockInitialized(address user);
-    event LockedFor(address user, uint256 amount);
-    event LockedAdditionalFor(bytes32 kekId, address user, uint256 amount);
-    event RewardsClaimedFor(address user, uint256[] rewardsBefore);
-    event WithdrawLockedFor(address user, bytes32 kekId);
-    event SetVeFXSProxy(address user, address proxy);
-    event MigratorToggled(address migrator);
-
 
     function init(address _user, address _operator, address _lpFarm, address _lpToken) external {
         require(!isInitialized, "already initialized");
@@ -74,8 +67,6 @@ contract LPLocker {
         IERC20(lpToken).safeTransferFrom(user, address(this), _liquidity);
         IERC20(lpToken).safeIncreaseAllowance(lpFarm, _liquidity);
         IUnifiedFarm(lpFarm).stakeLocked(_liquidity, _secs);
-
-        emit LockedFor(user, _liquidity);
     }
 
     // lock additional liquidity for user
@@ -86,16 +77,12 @@ contract LPLocker {
         IERC20(lpToken).safeTransferFrom(user, address(this), _liquidity);
         IERC20(lpToken).safeIncreaseAllowance(lpFarm, _liquidity);
         IUnifiedFarm(lpFarm).lockAdditional(_kekId, _liquidity);
-
-        emit LockedAdditionalFor(_kekId, user, _liquidity);
     }
 
     // withdraw and send directly to user to save gas
     function withdrawLocked(bytes32 _kekId) external {
         require(msg.sender == operator, "only operator");
         IUnifiedFarm(lpFarm).withdrawLocked(_kekId, user); 
-
-        emit WithdrawLockedFor(user, _kekId);
     }
 
     // get reward. should user be allowed to call this? can user game if so? TODO: (pb) check with stax logic
@@ -103,23 +90,17 @@ contract LPLocker {
     function getReward() external returns (uint256[] memory data) {
         require(msg.sender == operator, "only operator");
         data = IUnifiedFarm(lpFarm).getReward(user);
-
-        emit RewardsClaimedFor(user, data);
     }
 
     // Staker can allow a veFXS proxy (the proxy will have to toggle them first)
     function setVeFXSProxy(address proxyAddress) external {
         require(msg.sender == operator, "only operator");
         IUnifiedFarm(lpFarm).stakerSetVeFXSProxy(proxyAddress);
-
-        emit SetVeFXSProxy(user, proxyAddress);
     }
 
-    // Stake can allow a migrator
+    // Staker can allow a migrator
     function stakerToggleMigrator(address _migrator) external {
         require(msg.sender == operator, "only operator");
         IUnifiedFarm(lpFarm).stakerToggleMigrator(_migrator);
-
-        emit MigratorToggled(_migrator);
     }
 }

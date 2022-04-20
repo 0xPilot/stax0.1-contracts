@@ -18,6 +18,9 @@ interface ILPLocker {
     function lockAddtional(bytes32 _kekId, uint256 _liquidity) external;
     function withdrawLocked(bytes32 _kekId) external;
     function getReward() external returns (uint256[] memory data);
+    function stakerToggleMigrator(address _migrator) external;
+    function setVeFXSProxy(address proxyAddress) external;
+    function setOperator(address _operator) external;
 }
 
 interface IUnifiedFarm {
@@ -49,16 +52,36 @@ contract Stax is Ownable {
     address public lockerFactory; // factory to create user lp locker contracts
     address public templeToken; // reward token
     address public lpFarm; // TEMPLE/FRAX unified farm
+    address public veFXSProxy;
+    address public lockerMigrator;
 
     uint256 public totalLocked; // keep track of total locked lp tokens
     mapping(address => address) public lockers; // user contracts
 
     event TokenRecovered(address user, uint256 amount);
+    event LockerCreated(address user, address locker);
+    event LockedFor(address user, uint256 amount);
+    event LockedAdditionalFor(bytes32 kekId, address user, uint256 amount);
+    event RewardsClaimedFor(address user, uint256[] rewardsBefore);
+    event WithdrawLockedFor(address user, bytes32 kekId);
+    event SetVeFXSProxy(address user, address proxy);
+    event MigratorToggled(address user, address migrator);
+
 
     constructor(address _templeToken, address _lockerFactory, address _lpFarm) {
         templeToken = _templeToken;
         lockerFactory = _lockerFactory;
         lpFarm = _lpFarm;
+    }
+
+    function setVeFXSProxy(address _proxy) external onlyOwner {
+        require(_proxy != address(0), "address 0");
+        veFXSProxy = _proxy;
+    }
+
+    function setLockerMigrator(address _migrator) external onlyOwner {
+        require(_migrator != address(0), "address 0");
+        lockerMigrator = _migrator;
     }
 
     function recoverToken(address _token, uint256 _amount) external onlyOwner {
@@ -75,6 +98,8 @@ contract Stax is Ownable {
 
         address instanceAddress = ILPLockerFactory(lockerFactory).createLocker(msg.sender);
         lockers[msg.sender] = instanceAddress;
+
+        emit LockerCreated(msg.sender, instanceAddress);
     }
 
     function stakeLP(uint256 _amount, uint256 _secs) external hasLocker(msg.sender) {
@@ -83,6 +108,8 @@ contract Stax is Ownable {
         address locker = lockers[msg.sender];
         ILPLocker(locker).lock(_amount, _secs);
         totalLocked += _amount;
+
+        emit LockedFor(msg.sender, _amount);
     }
 
     function lockAdditional(uint256 _amount, bytes32 _kekId) external hasLocker(msg.sender) {
@@ -91,26 +118,52 @@ contract Stax is Ownable {
         address locker = lockers[msg.sender];
         ILPLocker(locker).lockAddtional(_kekId, _amount);
         totalLocked += _amount;
+
+        emit LockedAdditionalFor(_kekId, msg.sender, _amount);
     }
 
-    // function to get kekId of a staker
-    // needed because equivalent lp farm function is internal
-    /*function getUserKekId(address _user) external view returns (bytes32 kekId) {
-        address locker = lockers[_user];
-        if (locker != address(0)) {
-            IUnifiedFarm.LockedStake[] memory lockedStakes = IUnifiedFarm(lpFarm).lockedStakes(_user);
+    function getReward(address _user) external hasLocker(_user) {
+        address locker = lockers[msg.sender];
+        uint256[] memory data = ILPLocker(locker).getReward();
 
+        emit RewardsClaimedFor(_user, data);
+    }
+
+    function withdrawLocked(address _user, bytes32 _kekId) external hasLocker(_user) {
+        address locker = lockers[msg.sender];
+        ILPLocker(locker).withdrawLocked(_kekId);
+
+        emit WithdrawLockedFor(_user, _kekId);
+    }
+
+    function setVeFXSProxyFor(address _user) external hasLocker(_user) {
+        if (veFXSProxy != address(0)) {
+            address locker = lockers[msg.sender];
+            ILPLocker(locker).setVeFXSProxy(veFXSProxy);
+
+            emit SetVeFXSProxy(_user, veFXSProxy);
         }
-    }*/
+    }
 
-    // TODO: (pb) temple rewards logic
+    function toggleMigratorFor(address _user) external hasLocker(_user) {
+        if (lockerMigrator != address(0)) {
+            address locker = lockers[msg.sender];
+            ILPLocker(locker).stakerToggleMigrator(lockerMigrator);
+
+            emit MigratorToggled(_user, lockerMigrator);
+        }
+    }
+
+    // if operation has changed from this contract
+    function setOperatorFor(address _user, address _operator) external hasLocker(_user) onlyOwner {
+        address locker = lockers[_user];
+        ILPLocker(locker).setOperator(_operator);
+    }
+
+    // TODO: (pb) view funcs
 
 
-
-
-
-
-    ///////// modifiers /////////
+    // modifiers
     modifier hasLocker(address _user) {
         require(lockers[_user] != address(0), "user has no locker");
         _;
