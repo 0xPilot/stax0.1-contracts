@@ -61,11 +61,7 @@ contract StaxLPStaking is Ownable {
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
     event UpdatedRewardManager(address oldManager, address newManager);
-
-    struct Reward {
-        uint256 userRewardPerTokenPaid;
-        uint256 amount;
-    }
+    
 
     constructor(address _stakingToken, address _staxLPToken, address _rewardToken, address _rewardManager) {
         stakingToken = IERC20(_stakingToken);
@@ -217,7 +213,6 @@ contract StaxLPStaking is Ownable {
         if (reward > 0) {
             rewards[_account] = 0;
             rewardToken.safeTransfer(_account, reward);
-            //IDeposit(operator).rewardClaimed(pid, _account, reward);
             emit RewardPaid(_account, reward);
         }
 
@@ -238,7 +233,7 @@ contract StaxLPStaking is Ownable {
     function notifyRewardAmount(uint256 reward)
         external
         updateReward(address(0))
-        onlyOwner
+        onlyOwnerOrRewardManager
     {
         require(reward > 0, "invalid reward amount");
 
@@ -265,6 +260,11 @@ contract StaxLPStaking is Ownable {
             rewards[account] = earned(account);
             userRewardPerTokenPaid[account] = rewardPerTokenStored;
         }
+        _;
+    }
+
+    modifier onlyOwnerOrRewardManager() {
+        require(msg.sender == owner() || msg.sender == rewardManager, "only owner or rewards manager");
         _;
     }
 

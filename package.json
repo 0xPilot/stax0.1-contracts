@@ -32,5 +32,8 @@
     "ts-node": "^10.7.0",
     "typechain": "^5.2.0",
     "typescript": "^4.6.3"
+  },
+  "dependencies": {
+    "@nomiclabs/hardhat-ganache": "^2.0.1"
   }
 }
