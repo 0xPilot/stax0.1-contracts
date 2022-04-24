@@ -38,7 +38,6 @@ contract StaxLPStaking is Ownable {
     IStaxLPToken public staxLPToken;
     IERC20 public rewardToken;
 
-    address public operator;
     address public rewardManager;
 
     uint256 public constant DURATION = 86400 * 7;
@@ -61,7 +60,7 @@ contract StaxLPStaking is Ownable {
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
     event UpdatedRewardManager(address oldManager, address newManager);
-    
+
 
     constructor(address _stakingToken, address _staxLPToken, address _rewardToken, address _rewardManager) {
         stakingToken = IERC20(_stakingToken);
