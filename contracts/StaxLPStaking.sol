@@ -35,7 +35,6 @@ contract StaxLPStaking is Ownable {
     using SafeERC20 for IERC20;
 
     IERC20 public stakingToken;
-    IStaxLPToken public staxLPToken;
     IERC20 public rewardToken;
 
     address public rewardManager;
@@ -62,9 +61,8 @@ contract StaxLPStaking is Ownable {
     event UpdatedRewardManager(address oldManager, address newManager);
 
 
-    constructor(address _stakingToken, address _staxLPToken, address _rewardToken, address _rewardManager) {
+    constructor(address _stakingToken, address _rewardToken, address _rewardManager) {
         stakingToken = IERC20(_stakingToken);
-        staxLPToken = IStaxLPToken(_staxLPToken);
         rewardToken = IERC20(_rewardToken);
         rewardManager = _rewardManager;
     }
