@@ -43,9 +43,6 @@ contract LPLockerSingle is Ownable {
 
     address[] public rewardTokens;
 
-    // keep track of liquidity locked per kek_id for contract
-    //mapping(bytes32 => uint256) public lockedLiquidity;
-
     event SetLockParams(uint32 lockRate, uint32 liquidityRate);
     event Locked(address user, uint256 amountLocked, uint256 amountReserved);
     event RewardHarvested(address token, address to, uint256 amount);
@@ -55,6 +52,7 @@ contract LPLockerSingle is Ownable {
     event RewardsManagerSet(address manager);
     event OperatorSet(address operator);
     event WithdrawLocked(bytes32 _kekId, uint256 amount, bool _relock);
+    event TokenRecovered(address user, uint256 amount);
 
     constructor(
         address _lpFarm,
@@ -165,9 +163,9 @@ contract LPLockerSingle is Ownable {
 
     // add liqudity to pool
     // TODO: depends on pool decision
-    function addLiquidity() external onlyOwner {
+    /*function addLiquidity() external onlyOwner {
         // mit xLP:LP tokens (based on current reserves) and seed in pool
-    }
+    }*/
 
     // Staker can allow a veFXS proxy (the proxy will have to toggle them first)
     function setVeFXSProxy(address _proxy) external onlyOwner {
@@ -183,7 +181,21 @@ contract LPLockerSingle is Ownable {
         emit MigratorToggled(_migrator);
     }
 
-    //
+    // recover tokens except reward tokens
+    // for reward tokens use harvestRewards instead
+    function recoverToken(address _token, uint256 _amount) external onlyOperatorOrRewardsManager {
+        for (uint i=0; i<rewardTokens.length; i++) {
+            require(_token != rewardTokens[i], "can't recover reward token this way");
+        }
+        if (_amount == 0) {
+            _amount = IERC20(_token).balanceOf(address(this));
+        }
+        IERC20(_token).safeTransfer(owner(), _amount);
+
+        emit TokenRecovered(owner(), _amount);
+    }
+
+    // to execute arbitrary transactions such as actions to maintain peg with reward emissions
     function execute(address _to, bytes calldata _data) external onlyOwner {
         (bool success,) = _to.call{value:0}(_data);
         require(success, "execution failed");
@@ -191,6 +203,11 @@ contract LPLockerSingle is Ownable {
 
     modifier onlyRewardsManager {
         require(msg.sender == rewardsManager, "only rewards manager");
+        _;
+    }
+
+    modifier onlyOperatorOrRewardsManager {
+        require(msg.sender == operator || msg.sender == rewardsManager, "only operator or rewards manager");
         _;
     }
 
