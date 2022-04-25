@@ -21,7 +21,7 @@ interface IRewards{
 }
 
 /**
-* Based on synthetix BaseRewardPool.sol
+* Based on synthetix BaseRewardPool.sol & convex cvxLocker
 * Modified for use by TempleDAO 
 */
 
@@ -32,8 +32,6 @@ contract StaxLPStaking is Ownable {
     IERC20 public stakingToken;
     IERC20 public rewardToken;
 
-    address public rewardManager;
-
     uint256 public constant DURATION = 86400 * 7;
     uint256 private _totalSupply;
 
@@ -43,6 +41,7 @@ contract StaxLPStaking is Ownable {
     mapping(address => Reward) public rewardData;
     mapping(address => mapping(address => uint256)) public claimableRewards;
     mapping(address => mapping(address => uint256)) public userRewardPerTokenPaid;
+    mapping(address => mapping(address => bool)) public rewardDistributors;
 
     struct Reward {
         uint40 periodFinish;
@@ -56,19 +55,22 @@ contract StaxLPStaking is Ownable {
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, address rewardToken, uint256 reward);
     event UpdatedRewardManager(address oldManager, address newManager);
+    event ApprovedRewardDistributor(address token, address distributor);
 
 
-    constructor(address _stakingToken, address _rewardToken, address _rewardManager) {
+    constructor(address _stakingToken, address _rewardToken) {
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
-        rewardManager = _rewardManager;
     }
 
-    function setRewardManager(address _rewardManager) external onlyOwner {
-        require(_rewardManager != address(0), "invalid address");
-        address old = rewardManager;
-        rewardManager = _rewardManager;
-        emit UpdatedRewardManager(old, _rewardManager);
+    function approveRewardDistributor(
+        address _rewardsToken,
+        address _distributor,
+        bool _approved
+    ) external onlyOwner {
+        require(rewardData[_rewardsToken].lastUpdateTime > 0, "!exist");
+        rewardDistributors[_rewardsToken][_distributor] = _approved;
+        emit ApprovedRewardDistributor(_rewardsToken, _distributor);
     }
 
     function totalSupply() public view returns (uint256) {
@@ -131,16 +133,14 @@ contract StaxLPStaking is Ownable {
         return true;
     }
 
-    function stakeAll() external returns(bool){
+    function stakeAll() external {
         uint256 balance = stakingToken.balanceOf(msg.sender);
         stake(balance);
-        return true;
     }
 
     function stakeFor(address _for, uint256 _amount)
         public
         updateReward(_for)
-        returns(bool)
     {
         require(_amount > 0, "RewardPool : Cannot stake 0");
         // pull tokens
@@ -151,14 +151,11 @@ contract StaxLPStaking is Ownable {
         _balances[_for] += _amount;
 
         emit Staked(_for, _amount);
-        
-        return true;
     }
 
     function withdraw(uint256 amount, bool claim)
         public
         updateReward(msg.sender)
-        returns(bool)
     {
         require(amount > 0, "RewardPool : Cannot withdraw 0");
 
@@ -172,8 +169,6 @@ contract StaxLPStaking is Ownable {
             // can call internal because user reward already updated
             _getRewards(msg.sender);
         }
-
-        return true;
     }
 
     function withdrawAll(bool claim) external{
@@ -236,7 +231,8 @@ contract StaxLPStaking is Ownable {
     function notifyRewardAmount(
         address _rewardsToken,
         uint256 _amount
-    ) external updateReward(address(0)) onlyOwnerOrRewardManager {
+    ) external updateReward(address(0)) {
+        require(rewardDistributors[_rewardsToken][msg.sender] == true, "not distributor");
         require(_amount > 0, "No reward");
 
         _notifyReward(_rewardsToken, _amount);
@@ -262,10 +258,4 @@ contract StaxLPStaking is Ownable {
         }
         _;
     }
-
-    modifier onlyOwnerOrRewardManager() {
-        require(msg.sender == owner() || msg.sender == rewardManager, "only owner or rewards manager");
-        _;
-    }
-
 }
