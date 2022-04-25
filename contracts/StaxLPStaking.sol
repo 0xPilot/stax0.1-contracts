@@ -7,11 +7,6 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-interface IStaxLPToken {
-    function mint(address _to, uint256 _amount) external;
-    function burn(address _account, uint256 _amount) external;
-    function balanceOf(address _account) external;
-}
 
 interface IRewards{
     function stake(address, uint256) external;
@@ -40,24 +35,26 @@ contract StaxLPStaking is Ownable {
     address public rewardManager;
 
     uint256 public constant DURATION = 86400 * 7;
-    uint256 public periodFinish = 0;
-    uint256 public rewardRate = 0;
-    uint256 public lastUpdateTime;
-    uint256 public rewardPerTokenStored;
-    uint256 public currentRewards = 0;
-    uint256 public historicalRewards = 0;
     uint256 private _totalSupply;
 
-    address[] public extraRewards;
+    address[] public rewardTokens;
 
-    mapping(address => uint256) public userRewardPerTokenPaid;
-    mapping(address => uint256) public rewards;
     mapping(address => uint256) private _balances;
+    mapping(address => Reward) public rewardData;
+    mapping(address => mapping(address => uint256)) public claimableRewards;
+    mapping(address => mapping(address => uint256)) public userRewardPerTokenPaid;
 
-    event RewardAdded(uint256 reward);
+    struct Reward {
+        uint40 periodFinish;
+        uint216 rewardRate;
+        uint40 lastUpdateTime;
+        uint216 rewardPerTokenStored;
+    }
+
+    event RewardAdded(address token, uint256 amount);
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, uint256 reward);
+    event RewardPaid(address indexed user, address rewardToken, uint256 reward);
     event UpdatedRewardManager(address oldManager, address newManager);
 
 
@@ -82,41 +79,39 @@ contract StaxLPStaking is Ownable {
         return _balances[account];
     }
 
-    function extraRewardsLength() external view returns (uint256) {
-        return extraRewards.length;
+    function addReward(address _rewardToken) external onlyOwner {
+        require(rewardData[_rewardToken].lastUpdateTime == 0, "exists");
+        rewardTokens.push(_rewardToken);
+        rewardData[_rewardToken].lastUpdateTime = uint40(block.timestamp);
+        rewardData[_rewardToken].periodFinish = uint40(block.timestamp);
     }
 
-    function addExtraReward(address _reward) external returns (bool) {
-        require(msg.sender == rewardManager, "!authorized");
-        require(_reward != address(0),"!reward setting");
-
-        extraRewards.push(_reward);
-        return true;
-    }
-
-    function clearExtraRewards() external{
-        require(msg.sender == rewardManager, "!authorized");
-        delete extraRewards;
-    }
-
-    function lastTimeRewardApplicable() public view returns (uint256) {
-        if (periodFinish < block.timestamp) {
-            return periodFinish;
-        } else {
-            return block.timestamp;
-        }
-    }
-
-    function rewardPerToken() public view returns (uint256) {
+    function _rewardPerToken(address _rewardsToken) internal view returns (uint256) {
         if (totalSupply() == 0) {
-            return rewardPerTokenStored;
+            return rewardData[_rewardsToken].rewardPerTokenStored;
         }
 
-        return rewardPerTokenStored + (((lastTimeRewardApplicable() - lastUpdateTime) * rewardRate * 1e18) / totalSupply());
+        return
+            rewardData[_rewardsToken].rewardPerTokenStored +
+            (((_lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish) -
+                rewardData[_rewardsToken].lastUpdateTime) *
+                rewardData[_rewardsToken].rewardRate *
+                1e18) / totalSupply());
     }
 
-    function earned(address account) public view returns (uint256) {
-        return (balanceOf(account) * (rewardPerToken() - userRewardPerTokenPaid[account]) / 1e18) + rewards[account];
+    function rewardPerToken(address _rewardsToken) external view returns (uint256) {
+        return _rewardPerToken(_rewardsToken);
+    }
+
+    function _earned(
+        address _account,
+        address _rewardsToken,
+        uint256 _balance
+    ) internal view returns (uint256) {
+        return
+            (_balance * (_rewardPerToken(_rewardsToken) - userRewardPerTokenPaid[_account][_rewardsToken])) /
+            1e18 +
+            claimableRewards[_account][_rewardsToken];
     }
 
     function stake(uint256 _amount)
@@ -127,13 +122,6 @@ contract StaxLPStaking is Ownable {
         require(_amount > 0, "RewardPool : Cannot stake 0");
         
         stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
-        
-        //also stake to linked rewards
-        if (extraRewards.length > 0) {
-            for(uint i=0; i < extraRewards.length; i++){
-                IRewards(extraRewards[i]).stake(msg.sender, _amount);
-            }
-        }
 
         _totalSupply += _amount;
         _balances[msg.sender] += _amount;
@@ -157,13 +145,6 @@ contract StaxLPStaking is Ownable {
         require(_amount > 0, "RewardPool : Cannot stake 0");
         // pull tokens
         stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
-        
-        //also stake to linked rewards
-        if (extraRewards.length > 0) {
-            for(uint i=0; i < extraRewards.length; i++){
-                IRewards(extraRewards[i]).stake(_for, _amount);
-            }
-        }
 
         //give to _for
         _totalSupply += _amount;
@@ -181,21 +162,15 @@ contract StaxLPStaking is Ownable {
     {
         require(amount > 0, "RewardPool : Cannot withdraw 0");
 
-        //also withdraw from linked rewards
-        if (extraRewards.length > 0) {
-            for(uint i=0; i < extraRewards.length; i++){
-                IRewards(extraRewards[i]).withdraw(msg.sender, amount);
-            }
-        }
-
         _totalSupply -= amount;
         _balances[msg.sender] -= amount;
 
         stakingToken.safeTransfer(msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
      
-        if(claim){
-            getReward(msg.sender,true);
+        if (claim) {
+            // can call internal because user reward already updated
+            _getRewards(msg.sender);
         }
 
         return true;
@@ -205,57 +180,85 @@ contract StaxLPStaking is Ownable {
         withdraw(_balances[msg.sender], claim);
     }
 
-    function getReward(address _account, bool _claimExtras) public updateReward(_account) returns(bool){
-        uint256 reward = earned(_account);
-        if (reward > 0) {
-            rewards[_account] = 0;
-            rewardToken.safeTransfer(_account, reward);
-            emit RewardPaid(_account, reward);
-        }
+    function getRewards(address _account) public updateReward(_account) {
+        _getRewards(_account);
+    }
 
-        //also get rewards from linked rewards
-        if(_claimExtras){
-            for(uint i=0; i < extraRewards.length; i++){
-                IRewards(extraRewards[i]).getReward(_account);
+    // @dev internal function. make sure to call only after updateReward(account)
+    function _getRewards(address _account) internal {
+        for (uint256 i; i < rewardTokens.length; i++) {
+            address _rewardToken = rewardTokens[i];
+            uint256 claimable = claimableRewards[_account][_rewardToken];
+            if (claimable > 0) {
+                claimableRewards[_account][_rewardToken] = 0;
+                IERC20(_rewardToken).safeTransfer(_account, claimable);
+                emit RewardPaid(_account, _rewardToken, claimable);
             }
         }
-        return true;
     }
 
-    function getReward() external returns(bool){
-        getReward(msg.sender,true);
-        return true;
+    function getReward(address _account, address _rewardToken) external updateReward(_account) {
+        _getReward(_account, _rewardToken);
     }
 
-    function notifyRewardAmount(uint256 reward)
-        external
-        updateReward(address(0))
-        onlyOwnerOrRewardManager
-    {
-        require(reward > 0, "invalid reward amount");
+    function _getReward(address _account, address _rewardToken) internal {
+        uint256 amount = claimableRewards[_account][_rewardToken];
+        if (amount > 0) {
+            claimableRewards[_account][_rewardToken] = 0;
+            IERC20(_rewardToken).safeTransfer(_account, amount);
 
-        historicalRewards += reward;
-        if (block.timestamp >= periodFinish) {
-            rewardRate = reward/DURATION;
-        } else {
-            uint256 remaining = periodFinish - block.timestamp;
-            uint256 leftover = remaining * rewardRate;
-            reward += leftover;
-            rewardRate = reward/DURATION;
+            emit RewardPaid(_account, _rewardToken, amount);
         }
-        currentRewards = reward;
-        lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp + DURATION;
-        emit RewardAdded(reward);
+    }
+
+    function _lastTimeRewardApplicable(uint256 _finishTime) internal view returns (uint256) {
+        if (_finishTime < block.timestamp) {
+            return _finishTime;
+        }
+        return block.timestamp;
+    }
+
+    function _notifyReward(address _rewardsToken, uint256 _amount) internal {
+        Reward storage rdata = rewardData[_rewardsToken];
+
+        if (block.timestamp >= rdata.periodFinish) {
+            rdata.rewardRate = uint216(_amount / DURATION);
+        } else {
+            uint256 remaining = uint256(rdata.periodFinish) - block.timestamp;
+            uint256 leftover = remaining * rdata.rewardRate;
+            rdata.rewardRate = uint216((_amount + leftover) / DURATION);
+        }
+
+        rdata.lastUpdateTime = uint40(block.timestamp);
+        rdata.periodFinish = uint40(block.timestamp + DURATION);
+    }
+
+    function notifyRewardAmount(
+        address _rewardsToken,
+        uint256 _amount
+    ) external updateReward(address(0)) onlyOwnerOrRewardManager {
+        require(_amount > 0, "No reward");
+
+        _notifyReward(_rewardsToken, _amount);
+
+        IERC20(_rewardsToken).safeTransferFrom(msg.sender, address(this), _amount);
+
+        emit RewardAdded(_rewardsToken, _amount);
     }
 
 
-    modifier updateReward(address account) {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = lastTimeRewardApplicable();
-        if (account != address(0)) {
-            rewards[account] = earned(account);
-            userRewardPerTokenPaid[account] = rewardPerTokenStored;
+    modifier updateReward(address _account) {
+        {
+            // stack too deep
+            for (uint256 i = 0; i < rewardTokens.length; i++) {
+                address token = rewardTokens[i];
+                rewardData[token].rewardPerTokenStored = uint216(_rewardPerToken(token));
+                rewardData[token].lastUpdateTime = uint40(_lastTimeRewardApplicable(rewardData[token].periodFinish));
+                if (_account != address(0)) {
+                    claimableRewards[_account][token] = _earned(_account, token, _balances[_account]);
+                    userRewardPerTokenPaid[_account][token] = uint256(rewardData[token].rewardPerTokenStored);
+                }
+            }
         }
         _;
     }
