@@ -30,7 +30,7 @@ contract StaxLPStaking is Ownable {
     using SafeERC20 for IERC20;
 
     IERC20 public stakingToken;
-    IERC20 public rewardToken;
+    address public rewardDistributor;
 
     uint256 public constant DURATION = 86400 * 7;
     uint256 private _totalSupply;
@@ -41,7 +41,6 @@ contract StaxLPStaking is Ownable {
     mapping(address => Reward) public rewardData;
     mapping(address => mapping(address => uint256)) public claimableRewards;
     mapping(address => mapping(address => uint256)) public userRewardPerTokenPaid;
-    mapping(address => mapping(address => bool)) public rewardDistributors;
 
     struct Reward {
         uint40 periodFinish;
@@ -55,22 +54,17 @@ contract StaxLPStaking is Ownable {
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, address rewardToken, uint256 reward);
     event UpdatedRewardManager(address oldManager, address newManager);
-    event ApprovedRewardDistributor(address token, address distributor);
+    event ApprovedRewardDistributor(address token, address distributor, bool approved);
 
 
-    constructor(address _stakingToken, address _rewardToken) {
+    constructor(address _stakingToken, address _distributor) {
         stakingToken = IERC20(_stakingToken);
-        rewardToken = IERC20(_rewardToken);
+        rewardDistributor = _distributor;
     }
 
-    function approveRewardDistributor(
-        address _rewardsToken,
-        address _distributor,
-        bool _approved
-    ) external onlyOwner {
-        require(rewardData[_rewardsToken].lastUpdateTime > 0, "!exist");
-        rewardDistributors[_rewardsToken][_distributor] = _approved;
-        emit ApprovedRewardDistributor(_rewardsToken, _distributor);
+    // set distributor of rewards
+    function setRewardDistributor(address _distributor) external onlyOwner {
+        rewardDistributor = _distributor;
     }
 
     function totalSupply() public view returns (uint256) {
@@ -116,6 +110,7 @@ contract StaxLPStaking is Ownable {
             claimableRewards[_account][_rewardsToken];
     }
 
+    // TODO: ensure staker has originally locked? so that users don't just buy from AMM and stake for rewards?
     function stake(uint256 _amount)
         public
         updateReward(msg.sender)
@@ -232,7 +227,7 @@ contract StaxLPStaking is Ownable {
         address _rewardsToken,
         uint256 _amount
     ) external updateReward(address(0)) {
-        require(rewardDistributors[_rewardsToken][msg.sender] == true, "not distributor");
+        require(msg.sender == rewardDistributor, "not distributor");
         require(_amount > 0, "No reward");
 
         _notifyReward(_rewardsToken, _amount);
