@@ -21,24 +21,18 @@ contract RewardsManager is Ownable {
 
     address public staking;
     address public lpLocker;
-    
-    address[] public rewardTokens;
 
     event RewardDistributed(address staking, address token, uint256 amount);
     event ExtraRewardTokenTransferred(address to, address token, uint256 amount);
 
     constructor(
         address _staking,
-        address _lpLocker,
-        address[] memory _rewardTokens
+        address _lpLocker
     ) {
         staking = _staking;
         lpLocker = _lpLocker;
-
-        for (uint i=0; i<_rewardTokens.length; i++) {
-            rewardTokens.push(_rewardTokens[i]);
-        }
     }
+
 
     function distribute(address _token) external onlyOwner {
         _distribute(_token);
