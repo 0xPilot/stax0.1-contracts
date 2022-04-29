@@ -33,7 +33,6 @@ contract RewardsManager is Ownable {
         lpLocker = _lpLocker;
     }
 
-
     function distribute(address _token) external onlyOwner {
         _distribute(_token);
     }

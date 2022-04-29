@@ -6,8 +6,19 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
+// TODO: (pb) conform to styleguide
 
+/// @dev interface of the frax gauge. Based on FraxUnifiedFarmTemplate.sol
+/// https://github.com/FraxFinance/frax-solidity/blob/master/src/hardhat/contracts/Staking/FraxUnifiedFarmTemplate.sol
 interface IUnifiedFarm {
+    // Struct for the stake
+    struct LockedStake {
+        bytes32 kek_id;
+        uint256 start_timestamp;
+        uint256 liquidity;
+        uint256 ending_timestamp;
+        uint256 lock_multiplier; // 6 decimals of precision. 1x = 1000000
+    }
     function stakeLocked(uint256 liquidity, uint256 secs) external;
     function getReward(address destination_address) external returns (uint256[] memory);
     function withdrawLocked(bytes32 kek_id, address destination_address) external;
@@ -15,6 +26,10 @@ interface IUnifiedFarm {
     function proxyToggleStaker(address staker_address) external;
     function stakerSetVeFXSProxy(address proxy_address) external;
     function stakerToggleMigrator(address migrator_address) external;
+    function lock_time_for_max_multiplier() external view returns (uint256);
+    function getAllRewardTokens() external view returns (address[] memory);
+    function lockedStates(address account) external view returns (LockedStake[] memory);
+    function lockedLiquidityOf(address account) external view returns (uint256);
 }
 
 interface IXLPToken {
@@ -27,65 +42,67 @@ contract LPLockerSingle is Ownable {
 
     using SafeERC20 for IERC20;
 
-    address public lpFarm; // TEMPLE/FRAX LP farm.
-    address public lpToken; // TEMPLE/FRAX LP
-    address public xlpToken;
+    IUnifiedFarm public lpFarm; // frax unified lp farm
+    IERC20 public lpToken; // lp token
+    IXLPToken public xlpToken; // xLP token
     address public rewardsManager;
     address public operator;
 
-    uint32 public lockRate;
-    uint32 public liquidityRate;
-    uint32 public lockDenominator = 100;
-    uint32 public constant MIN_LIQUIDITY_RATE = 10;
-    uint32 public constant MAX_LIQUIDITY_RATE = 50; // max 50% of lp deposit/reserve to be used for liquidity
+    LockRate public lockRate;
 
-    uint256 public constant MAX_LOCK_TIME = 3 * 365 * 86400; // 3 years
+    // fxs emissions + random token extra bribe
+    IERC20[] public rewardTokens;
 
-    address[] public rewardTokens;
+    // can withdraw lp for balancing liquidity pool
+    mapping(address => bool) public lpManagers;
 
-    event SetLockParams(uint32 lockRate, uint32 liquidityRate);
+    struct LockRate {
+        uint128 numerator;
+        uint128 denominator;
+    }
+
+    event SetLockParams(uint128 numerator, uint128 denominator);
     event Locked(address user, uint256 amountLocked, uint256 amountReserved);
     event RewardHarvested(address token, address to, uint256 amount);
     event RewardClaimed(uint256[] data);
     event SetVeFXSProxy(address proxy);
     event MigratorToggled(address migrator);
     event RewardsManagerSet(address manager);
-    event OperatorSet(address operator);
-    event WithdrawLocked(bytes32 _kekId, uint256 amount, bool _relock);
+    event WithdrawLocked(bytes32 _kekId, uint256 amount);
     event TokenRecovered(address user, uint256 amount);
+    event LPTokenWithdrawn(address withdrawer, uint256 amount);
 
     constructor(
         address _lpFarm,
         address _lpToken,
         address _xlpToken,
-        address _rewardsManager,
-        address _operator,
-        address[] memory _rewards
+        address _rewardsManager
     ) {
-        lpFarm = _lpFarm;
-        lpToken = _lpToken;
-        xlpToken = _xlpToken;
+        lpFarm = IUnifiedFarm(_lpFarm);
+        lpToken = IERC20(_lpToken);
+        xlpToken = IXLPToken(_xlpToken);
         rewardsManager = _rewardsManager;
-        operator = _operator;
-
-        for (uint i=0; i<_rewards.length; i++) {
-            rewardTokens.push(_rewards[i]);
-        }
     }
 
     // set lp farm in case of migration
     function setLPFarm(address _lpFarm) external onlyOwner {
         require(_lpFarm != address(0), "invalid address");
-        lpFarm = _lpFarm;
+        lpFarm = IUnifiedFarm(_lpFarm);
     }
 
-    // set percentage of lp deposit to lock
-    function setLockParams(uint256 _lockRate, uint256 _liquidityRate) external onlyOwner {
-        require(_lockRate >= MAX_LIQUIDITY_RATE &&  _lockRate <= 100, "invalid lock rate");
-        require(_liquidityRate >= MIN_LIQUIDITY_RATE && _liquidityRate <= MAX_LIQUIDITY_RATE, "invalid liquidity rate");
-        require(_lockRate + _liquidityRate == lockDenominator, "invalid rates sum");
-        lockRate = uint32(_lockRate);
-        liquidityRate = uint32(_liquidityRate);
+    function setRewardTokens() external {
+        address[] memory tokens = lpFarm.getAllRewardTokens();
+        for (uint i=0; i<tokens.length; i++) {
+            rewardTokens.push(IERC20(tokens[i]));
+        }
+    }
+
+    function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
+        require(_numerator > 0 && _numerator <= _denominator, "invalid params");
+        lockRate.numerator = _numerator;
+        lockRate.denominator = _denominator;
+
+        emit SetLockParams(_numerator, _denominator);
     }
 
     function setRewardsManager(address _manager) external onlyOwner {
@@ -95,77 +112,82 @@ contract LPLockerSingle is Ownable {
         emit RewardsManagerSet(_manager);
     }
 
-    function setOperator(address _operator) external onlyOwner {
-        require(_operator != address(0), "invalid address");
-        operator = _operator;
-
-        emit OperatorSet(_operator);
+    function setLPManager(address _manager, bool _status) external onlyOwner {
+        lpManagers[_manager] = _status;
     }
 
-    // lock liquidity for user
-    // new lock created each time for max lock time
-    function lock(uint256 _liquidity) external {
+    function lockTimeForMaxMultiplier() public view returns (uint256) {
+        return lpFarm.lock_time_for_max_multiplier();
+    }
+
+    // lock that adds additionally to single lock position for every user lock
+    // this scenario assumes there is only one lock at all times for this contract
+    function lock(uint256 _liquidity, bytes32 _kekId) external {
         // pull tokens and update allowance
-        IERC20(lpToken).safeTransferFrom(msg.sender, address(this), _liquidity);
+        lpToken.safeTransferFrom(msg.sender, address(this), _liquidity);
         uint256 lockAmount = getLockAmount(_liquidity);
-        IERC20(lpToken).safeIncreaseAllowance(lpFarm, lockAmount);
-        IUnifiedFarm(lpFarm).stakeLocked(lockAmount, MAX_LOCK_TIME);
+        lpToken.safeIncreaseAllowance(address(lpFarm), lockAmount);
+
+        // if first time lock
+        IUnifiedFarm.LockedStake[] memory lockedStates = lpFarm.lockedStates(address(this));
+        if (lockedStates.length == 0) {
+            lpFarm.stakeLocked(lockAmount, lockTimeForMaxMultiplier());
+        } else {
+            lpFarm.lockAdditional(_kekId, lockAmount);
+        }
 
         // mint lp token to user
-        // TODO: 1. do we mint this token 1:1? 2. do we mint the locked amount or total lp amount equivalent to user?
-        IXLPToken(xlpToken).mint(msg.sender, lockAmount);
+        xlpToken.mint(msg.sender, lockAmount);
 
         emit Locked(msg.sender, lockAmount, _liquidity - lockAmount);
     }
 
-    // withdraw locked lp. optionally relock
-    function withdrawLocked(bytes32 _kekId, bool _relock) external onlyOperator {
-        // @dev there may be reserve lp tokens in contract. account for those
-        uint256 lpTokensBefore = IERC20(lpToken).balanceOf(address(this));
-        IUnifiedFarm(lpFarm).withdrawLocked(_kekId, address(this));
-        uint256 lpTokensAfter = IERC20(lpToken).balanceOf(address(this));
-        if (_relock) {
-            uint256 toLock = lpTokensAfter - lpTokensBefore;
-            IERC20(lpToken).safeIncreaseAllowance(lpFarm, toLock);
-            IUnifiedFarm(lpFarm).stakeLocked(toLock, MAX_LOCK_TIME);
+    // withdraw locked lp
+    // withdrawLocked is called to withdraw expired locks and relock
+    function withdrawLocked(bytes32 _oldKekId, bytes32 _newKekId) external {
+        // there may be reserve lp tokens in contract. account for those
+        uint256 lpTokensBefore = lpToken.balanceOf(address(this));
+        lpFarm.withdrawLocked(_oldKekId, address(this));
+        uint256 lpTokensAfter = lpToken.balanceOf(address(this));
+        uint256 lockAmount;
+        unchecked {
+            lockAmount = lpTokensAfter - lpTokensBefore;
         }
 
-        emit WithdrawLocked(_kekId, lpTokensAfter - lpTokensBefore, _relock);
+        lpToken.safeIncreaseAllowance(address(lpFarm), lockAmount);
+        lpFarm.lockAdditional(_newKekId, lockAmount);
+
+        emit WithdrawLocked(_oldKekId, lockAmount);
     }
 
     // get amount to lock based on lock rate
     function getLockAmount(uint256 _amount) internal view returns (uint256) {
-        if (lockRate == 0 || liquidityRate == 0) {
+        // if not set, lock total amount
+        if (lockRate.numerator == 0) {
             return _amount;
         }
-        return (_amount * lockRate) / lockDenominator;
+        return (_amount * lockRate.numerator) / lockRate.denominator;
     }
 
     // claim reward to this contract.
     // reward manager will withdraw rewards for incentivizing xlp stakers
     function getReward() external returns (uint256[] memory data) {
-        data = IUnifiedFarm(lpFarm).getReward(address(this));
+        data = lpFarm.getReward(address(this));
 
         emit RewardClaimed(data);
     }
 
     // harvest rewards
-    function harvestRewards() external onlyRewardsManager {
+    function harvestRewards() external {
         // iterate through reward tokens and transfer to rewardsManager
         for (uint i=0; i<rewardTokens.length; i++) {
-            address token = rewardTokens[i];
-            uint256 amount = IERC20(token).balanceOf(address(this));
+            IERC20 token = rewardTokens[i];
+            uint256 amount = token.balanceOf(address(this));
             IERC20(token).safeTransfer(rewardsManager, amount);
 
-            emit RewardHarvested(token, rewardsManager, amount);
+            emit RewardHarvested(address(token), rewardsManager, amount);
         }
     }
-
-    // add liqudity to pool
-    // TODO: depends on pool decision
-    /*function addLiquidity() external onlyOwner {
-        // mit xLP:LP tokens (based on current reserves) and seed in pool
-    }*/
 
     // Staker can allow a veFXS proxy (the proxy will have to toggle them first)
     function setVeFXSProxy(address _proxy) external onlyOwner {
@@ -174,45 +196,53 @@ contract LPLockerSingle is Ownable {
         emit SetVeFXSProxy(_proxy);
     }
 
+    // To migrate:
+    // - unified farm owner/gov sets valid migrator
+    // - stakerToggleMigrator() - this func
+    // - gov/owner calls toggleMigrations()
+    // - migrator calls migrator_withdraw_locked(this, kek_id), which calls _withdrawLocked(staker, migrator) - sends lps to migrator
+    // - migrator is assumed to be new lplocker and therefore would now own the lp tokens and can relock (stakelock) in newly upgraded gauge.
     // Staker can allow a migrator
     function stakerToggleMigrator(address _migrator) external onlyOwner {
-        IUnifiedFarm(lpFarm).stakerToggleMigrator(_migrator);
+        lpFarm.stakerToggleMigrator(_migrator);
 
         emit MigratorToggled(_migrator);
     }
 
+    // withdraw lp token for use in balancing liquidity pool
+    function withdrawLPToken(uint256 _amount) external isLPManager {
+        _transferToken(lpToken, msg.sender, _amount);
+
+        emit LPTokenWithdrawn(msg.sender, _amount);
+    }
+
     // recover tokens except reward tokens
     // for reward tokens use harvestRewards instead
-    function recoverToken(address _token, uint256 _amount) external onlyOperatorOrRewardsManager {
+    function recoverToken(address _token, address _to, uint256 _amount) external onlyOwner {
         for (uint i=0; i<rewardTokens.length; i++) {
-            require(_token != rewardTokens[i], "can't recover reward token this way");
+            require(_token != address(rewardTokens[i]), "can't recover reward token this way");
         }
-        if (_amount == 0) {
-            _amount = IERC20(_token).balanceOf(address(this));
-        }
-        IERC20(_token).safeTransfer(owner(), _amount);
 
-        emit TokenRecovered(owner(), _amount);
+        _transferToken(IERC20(_token), _to, _amount);
+
+        emit TokenRecovered(_to, _amount);
     }
 
-    // to execute arbitrary transactions such as actions to maintain peg with reward emissions
-    function execute(address _to, bytes calldata _data) external onlyOwner {
+    function _transferToken(IERC20 _token, address _to, uint256 _amount) internal {
+        uint256 balance = _token.balanceOf(address(this));
+        require(_amount <= balance, "not enough tokens");
+        _token.safeTransfer(_to, _amount);
+    }
+
+    // to execute arbitrary transactions
+    // will remove if there's no found concrete use during tests
+    /*function execute(address _to, bytes calldata _data) external onlyOwner {
         (bool success,) = _to.call{value:0}(_data);
         require(success, "execution failed");
-    }
+    }*/
 
-    modifier onlyRewardsManager {
-        require(msg.sender == rewardsManager, "only rewards manager");
-        _;
-    }
-
-    modifier onlyOperatorOrRewardsManager {
-        require(msg.sender == operator || msg.sender == rewardsManager, "only operator or rewards manager");
-        _;
-    }
-
-    modifier onlyOperator {
-        require(msg.sender == rewardsManager, "only rewards manager");
+    modifier isLPManager() {
+        require(lpManagers[msg.sender] == true, "not lp manager");
         _;
     }
 }
