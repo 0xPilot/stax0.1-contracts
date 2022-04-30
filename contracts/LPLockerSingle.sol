@@ -28,7 +28,7 @@ interface IUnifiedFarm {
     function stakerToggleMigrator(address migrator_address) external;
     function lock_time_for_max_multiplier() external view returns (uint256);
     function getAllRewardTokens() external view returns (address[] memory);
-    function lockedStates(address account) external view returns (LockedStake[] memory);
+    function lockedStakes(address account) external view returns (LockedStake[] memory);
     function lockedLiquidityOf(address account) external view returns (uint256);
 }
 
@@ -71,6 +71,9 @@ contract LPLockerSingle is Ownable {
     event WithdrawLocked(bytes32 _kekId, uint256 amount);
     event TokenRecovered(address user, uint256 amount);
     event LPTokenWithdrawn(address withdrawer, uint256 amount);
+
+    // for testing
+    event LockAmount(uint256);
 
     constructor(
         address _lpFarm,
@@ -126,11 +129,12 @@ contract LPLockerSingle is Ownable {
         // pull tokens and update allowance
         lpToken.safeTransferFrom(msg.sender, address(this), _liquidity);
         uint256 lockAmount = getLockAmount(_liquidity);
+        emit LockAmount(lockAmount);
         lpToken.safeIncreaseAllowance(address(lpFarm), lockAmount);
 
         // if first time lock
-        IUnifiedFarm.LockedStake[] memory lockedStates = lpFarm.lockedStates(address(this));
-        if (lockedStates.length == 0) {
+        IUnifiedFarm.LockedStake[] memory lockedStakes = lpFarm.lockedStakes(address(this));
+        if (lockedStakes.length == 0) {
             lpFarm.stakeLocked(lockAmount, lockTimeForMaxMultiplier());
         } else {
             lpFarm.lockAdditional(_kekId, lockAmount);
