@@ -30,6 +30,8 @@ interface IUnifiedFarm {
     function getAllRewardTokens() external view returns (address[] memory);
     function lockedStakes(address account) external view returns (LockedStake[] memory);
     function lockedLiquidityOf(address account) external view returns (uint256);
+    function lockedStakesOf(address account) external view returns (LockedStake[] memory);
+    function lockedStakesOfLength(address account) external view returns (uint256);
 }
 
 interface IXLPToken {
@@ -72,8 +74,6 @@ contract LPLockerSingle is Ownable {
     event TokenRecovered(address user, uint256 amount);
     event LPTokenWithdrawn(address withdrawer, uint256 amount);
 
-    // for testing
-    event LockAmount(uint256);
 
     constructor(
         address _lpFarm,
@@ -128,13 +128,16 @@ contract LPLockerSingle is Ownable {
     function lock(uint256 _liquidity, bytes32 _kekId) external {
         // pull tokens and update allowance
         lpToken.safeTransferFrom(msg.sender, address(this), _liquidity);
-        uint256 lockAmount = getLockAmount(_liquidity);
-        emit LockAmount(lockAmount);
+        uint256 lockAmount = _getLockAmount(_liquidity);
         lpToken.safeIncreaseAllowance(address(lpFarm), lockAmount);
 
         // if first time lock
-        IUnifiedFarm.LockedStake[] memory lockedStakes = lpFarm.lockedStakes(address(this));
-        if (lockedStakes.length == 0) {
+        IUnifiedFarm.LockedStake[] memory lockedStakes = lpFarm.lockedStakesOf(address(this));
+        uint256 lockedStakesLength = lockedStakes.length; //lpFarm.lockedStakesOfLength(address(this));
+
+        // we want to lock additional if lock end time not expired
+        // check last lockedStake if expired
+        if (lockedStakesLength == 0 || block.timestamp >= lockedStakes[lockedStakesLength - 1].ending_timestamp) {
             lpFarm.stakeLocked(lockAmount, lockTimeForMaxMultiplier());
         } else {
             lpFarm.lockAdditional(_kekId, lockAmount);
@@ -165,7 +168,7 @@ contract LPLockerSingle is Ownable {
     }
 
     // get amount to lock based on lock rate
-    function getLockAmount(uint256 _amount) internal view returns (uint256) {
+    function _getLockAmount(uint256 _amount) internal view returns (uint256) {
         // if not set, lock total amount
         if (lockRate.numerator == 0) {
             return _amount;
