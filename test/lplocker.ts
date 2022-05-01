@@ -7,15 +7,18 @@ import {
     LPLockerSingle, LPLockerSingle__factory,
     TempleUniswapV2Pair__factory,
     FraxUnifiedFarmERC20, FraxUnifiedFarmERC20__factory, 
-    RewardsManager, RewardsManager__factory, StaxLPStaking, StaxLPStaking__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory
+    RewardsManager, RewardsManager__factory, StaxLPStaking, StaxLPStaking__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, ERC20, ERC20__factory
 } from "../typechain";
 
 const lpBigHolderAddress = "0xA5F74Ae4b22A792f18C42Ec49A85cF560F16559F";
 const fraxMultisigAddress = "0xB1748C79709f4Ba2Dd82834B8c82D4a505003f27";
+const templeMultisigAddress = "0x4D6175d58C5AceEf30F546C0d5A557efFa53A950";
 const fraxUnifiedFarmAddress = "0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16";
 const lpTokenAddress = "0x6021444f1706f15465bEe85463BCc7d7cC17Fc03";
+const fxsTokenAddress = "0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0";
+const templeTokenAddress = "0x470EBf5f030Ed85Fc1ed4C2d36B9DD02e77CF1b7";
 
-describe("Temple ERC20 Token", async () => {
+describe("LP Locker", async () => {
     let staxLPToken: StaxLP;
     let owner: Signer;
     let minter: Signer;
@@ -23,11 +26,14 @@ describe("Temple ERC20 Token", async () => {
     let validProxy: Signer;
     let lpBigHolder: Signer;
     let fraxMultisig: Signer;
+    let templeMultisig: Signer;
     let v2pair: Contract; //TempleUniswapV2Pair
     let locker: LPLockerSingle;
     let lpFarm: Contract; //FraxUnifiedFarmERC20;
     let rewardsManager: RewardsManager;
     let staking: StaxLPStaking;
+    let fxsToken: ERC20;
+    let templeToken: ERC20;
 
     beforeEach(async () => {
         [owner, minter, alan, validProxy] = await ethers.getSigners();
@@ -41,6 +47,8 @@ describe("Temple ERC20 Token", async () => {
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
         locker = await new LPLockerSingle__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address, await owner.getAddress());
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address, locker.address);
+        fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
+        templeToken = ERC20__factory.connect(templeTokenAddress, alan);
         
         // impersonate account and transfer lp tokens
         await network.provider.request({
@@ -51,7 +59,14 @@ describe("Temple ERC20 Token", async () => {
 
         await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 300);
 
-        // impersonal frax comptroller /multisig and reduce lock time for max multiplier
+        // impersonate temple msig
+        await network.provider.request({
+            method: "hardhat_impersonateAccount",
+            params: [templeMultisigAddress]
+        });
+        templeMultisig = await ethers.getSigner(templeMultisigAddress);
+
+        // impersonate frax comptroller /multisig and reduce lock time for max multiplier
         await network.provider.request({
             method: "hardhat_impersonateAccount",
             params: [fraxMultisigAddress]
@@ -197,15 +212,44 @@ describe("Temple ERC20 Token", async () => {
 
     describe("Rewards", async () => {
         beforeEach(async () => {
-            await locker.setLockParams(80, 100);
+            await locker.setLockParams(100, 100);
             await v2pair.connect(alan).approve(locker.address, 300);
             await staxLPToken.addMinter(locker.address);
-            await locker.connect(alan).lock(100, ethers.utils.formatBytes32String("0x00"));
-            // fast forward to end of locktime
-            await mineForwardSeconds(365 * 3 * 86400);
+            await locker.connect(alan).lock(300, ethers.utils.formatBytes32String("0x00"));
+
+            await locker.setRewardTokens();
+            await locker.setRewardsManager(rewardsManager.address);
+
+            // send fxs and templ to lp farm to ensure enough reward tokens before fast forwarding
+            fxsToken.connect(fraxMultisig).transfer(lpFarm.address, await fxsToken.balanceOf(await fraxMultisig.getAddress()));
+            templeToken.connect(templeMultisig).transfer(lpFarm.address, await templeToken.balanceOf(await templeMultisig.getAddress()));
         });
 
+        it("gets rewards", async () => {
+            // fast forward
+            await mineForwardSeconds(10 * 86400);
 
+            await locker.getReward();
+            //console.log("balance after get rewards ", await fxsToken.balanceOf(locker.address));
+            //console.log("balance after get rewards: temple ", await templeToken.balanceOf(locker.address));
+
+        });
+
+        it("harvests rewards", async () => {
+            // fast forward and get reward
+            await mineForwardSeconds(10 * 86400);
+            await locker.getReward();
+            const templeBalanceBefore = await templeToken.balanceOf(locker.address);
+            const fxsBalanceBefore = await fxsToken.balanceOf(locker.address);
+
+            console.log(await locker.rewardTokens(0));
+
+            //await locker.harvestRewards();
+            await expect(locker.harvestRewards()).to.emit(locker, "RewardHarvested");
+
+            expect(await templeToken.balanceOf(rewardsManager.address)).to.eq(templeBalanceBefore);
+            expect(await fxsToken.balanceOf(rewardsManager.address)).to.eq(fxsBalanceBefore);
+        });
     });
 
     describe("LP Manager", async () => {
