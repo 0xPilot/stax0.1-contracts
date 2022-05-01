@@ -20,6 +20,7 @@ describe("Temple ERC20 Token", async () => {
     let owner: Signer;
     let minter: Signer;
     let alan: Signer;
+    let validProxy: Signer;
     let lpBigHolder: Signer;
     let fraxMultisig: Signer;
     let v2pair: Contract; //TempleUniswapV2Pair
@@ -29,7 +30,7 @@ describe("Temple ERC20 Token", async () => {
     let staking: StaxLPStaking;
 
     beforeEach(async () => {
-        [owner, minter, alan] = await ethers.getSigners();
+        [owner, minter, alan, validProxy] = await ethers.getSigners();
         // lp token
         v2pair = new Contract(lpTokenAddress, TempleUniswapV2Pair__factory.abi);
         staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");
@@ -64,26 +65,38 @@ describe("Temple ERC20 Token", async () => {
             BigNumber.from(86400 * 7), // reduce to 7 days
             BigNumber.from(86400 * 1) // min lock time
         ]);
+        // add to valid migrators and proxies
+        await lpFarm.connect(fraxMultisig).toggleMigrator(await owner.getAddress());
+        await lpFarm.connect(fraxMultisig).toggleValidVeFXSProxy(await validProxy.getAddress());
+        //await lpFarm.connect(validProxy).proxyToggleStaker(locker.address);
+        //await locker.setVeFXSProxy(await validProxy.getAddress());
     });
 
     describe("Locking", async () => {
 
         it("admin tests", async () => {
-            shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /invalid address/)
-            shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /invalid address/)
-            shouldThrow(locker.connect(alan).setLockParams(80, 100), /invalid address/);
-            shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /invalid address/)
+            shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
+            shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/)
+            
+            shouldThrow(locker.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/)
 
             // happy paths
             await locker.setLPFarm(lpFarm.address);
             await locker.setLPManager(await alan.getAddress(), true);
             await locker.setLockParams(80, 100);
             await locker.setRewardsManager(await alan.getAddress());
+            await locker.stakerToggleMigrator(await owner.getAddress());
+
+            await lpFarm.connect(validProxy).proxyToggleStaker(locker.address);
+            await locker.setVeFXSProxy(await validProxy.getAddress());
         });
 
         it("should set lp farm", async () => {
-            await locker.setLPFarm(lpFarm.address);
-            expect(await locker.lpFarm()).to.eq(lpFarm.address);
+            await locker.setLPFarm(await owner.getAddress());
+            expect(await locker.lpFarm()).to.eq(await owner.getAddress());
         });
 
         it("should set lock params", async() => {
@@ -108,6 +121,10 @@ describe("Temple ERC20 Token", async () => {
         it("should set lp manager", async() => {
             await locker.setLPManager(await alan.getAddress(), true);
             expect(await locker.lpManagers(await alan.getAddress())).to.eq(true);
+        });
+
+        it("should toggle migrator for migration", async () => {
+            await locker.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("should return right time for max lock", async() => {
