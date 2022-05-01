@@ -38,7 +38,8 @@ describe("LP Locker", async () => {
     beforeEach(async () => {
         [owner, minter, alan, validProxy] = await ethers.getSigners();
         // lp token
-        v2pair = new Contract(lpTokenAddress, TempleUniswapV2Pair__factory.abi);
+        //v2pair = new Contract(lpTokenAddress, TempleUniswapV2Pair__factory.abi);
+        v2pair = TempleUniswapV2Pair__factory.connect(lpTokenAddress, owner);
         staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");
         staking = await new StaxLPStaking__factory(owner).deploy(v2pair.address, await alan.getAddress());
         //lpFarm = new FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory(FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.abi, 
@@ -49,6 +50,8 @@ describe("LP Locker", async () => {
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address, locker.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
+
+        await locker.setLPManager(await alan.getAddress(), true);
         
         // impersonate account and transfer lp tokens
         await network.provider.request({
@@ -90,13 +93,13 @@ describe("LP Locker", async () => {
     describe("Locking", async () => {
 
         it("admin tests", async () => {
-            shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/)
-            shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
+            shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /Ownable: caller is not the owner/);
             shouldThrow(locker.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
             
-            shouldThrow(locker.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/)
-            shouldThrow(locker.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/)
+            shouldThrow(locker.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
+            shouldThrow(locker.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
 
             // happy paths
             await locker.setLPFarm(lpFarm.address);
@@ -142,6 +145,7 @@ describe("LP Locker", async () => {
             await locker.stakerToggleMigrator(await owner.getAddress());
         });
 
+       
         it("should return right time for max lock", async() => {
             expect(await locker.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
         });
@@ -208,6 +212,29 @@ describe("LP Locker", async () => {
             expect(newLockedStakes[0].ending_timestamp).to.eq(0);
             expect(newLockedStakes[0].lock_multiplier).to.eq(0);
         });
+
+        it("lp manager withdraws lp token reserves", async () => {
+            // lock and withdraw reserves
+            // case first lock
+            await locker.setLockParams(80, 100);
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await staxLPToken.addMinter(locker.address);
+            await locker.connect(alan).lock(100, ethers.utils.formatBytes32String("0x00"));
+
+            const lockedStakes = await lpFarm.lockedStakesOf(locker.address);
+            const lockedStake = lockedStakes[0];
+            const kekId = lockedStake.kek_id;
+            await locker.connect(alan).lock(100, kekId);
+            
+            // check reserves
+            expect(await v2pair.balanceOf(locker.address)).to.eq(40);
+            const lpBalanceLocker = await v2pair.balanceOf(locker.address);
+            const lpBalanceManager = await v2pair.balanceOf(await alan.getAddress());
+            console.log("bal of lp manager before withdrawing ", await v2pair.balanceOf(await alan.getAddress()));
+            // withdraw reserves
+            await locker.connect(alan).withdrawLPToken(lpBalanceLocker);
+            expect(await v2pair.balanceOf(await alan.getAddress())).to.eq(lpBalanceLocker.add(lpBalanceManager));
+        });
     });
 
     describe("Rewards", async () => {
@@ -230,9 +257,6 @@ describe("LP Locker", async () => {
             await mineForwardSeconds(10 * 86400);
 
             await locker.getReward();
-            //console.log("balance after get rewards ", await fxsToken.balanceOf(locker.address));
-            //console.log("balance after get rewards: temple ", await templeToken.balanceOf(locker.address));
-
         });
 
         it("harvests rewards", async () => {
@@ -249,13 +273,6 @@ describe("LP Locker", async () => {
 
             expect(await templeToken.balanceOf(rewardsManager.address)).to.eq(templeBalanceBefore);
             expect(await fxsToken.balanceOf(rewardsManager.address)).to.eq(fxsBalanceBefore);
-        });
-    });
-
-    describe("LP Manager", async () => {
-
-        it("lp manager withdraws lp tokens", async() => {
-
         });
     });
 });
