@@ -8,18 +8,6 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
-interface IRewards{
-    function stake(address, uint256) external;
-    function stakeFor(address, uint256) external;
-    function withdraw(address, uint256) external;
-    function exit(address) external;
-    function getReward(address) external;
-    function queueNewRewards(uint256) external;
-    function notifyRewardAmount(uint256) external;
-    function addExtraReward(address) external;
-    function stakingToken() external returns (address);
-}
-
 /**
 * Based on synthetix BaseRewardPool.sol & convex cvxLocker
 * Modified for use by TempleDAO 
@@ -53,8 +41,7 @@ contract StaxLPStaking is Ownable {
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, address rewardToken, uint256 reward);
-    event UpdatedRewardManager(address oldManager, address newManager);
-    event ApprovedRewardDistributor(address token, address distributor, bool approved);
+    event UpdatedRewardDistributor(address distributor);
 
 
     constructor(address _stakingToken, address _distributor) {
@@ -65,6 +52,8 @@ contract StaxLPStaking is Ownable {
     // set distributor of rewards
     function setRewardDistributor(address _distributor) external onlyOwner {
         rewardDistributor = _distributor;
+
+        emit UpdatedRewardDistributor(_distributor);
     }
 
     function totalSupply() public view returns (uint256) {
@@ -97,6 +86,10 @@ contract StaxLPStaking is Ownable {
 
     function rewardPerToken(address _rewardsToken) external view returns (uint256) {
         return _rewardPerToken(_rewardsToken);
+    }
+
+    function rewardPeriodFinish(address _token) external view returns (uint40) {
+        return rewardData[_token].periodFinish;
     }
 
     function _earned(

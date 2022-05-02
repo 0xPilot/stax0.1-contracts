@@ -8,7 +8,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 
 interface IXLPToken {
-    function mint(address to, uint256 amount) external;
     function burn(address account, uint256 amount) external;
 }
 
@@ -56,7 +55,7 @@ contract RefundLockers is Ownable {
     }
 
     modifier ensureEnoughLPTokens(uint256 _amount) {
-        require(IERC20(lpToken).balanceOf(address(this)) >= _amount, "not enough lp tokens");
+        require(lpToken.balanceOf(address(this)) >= _amount, "not enough lp tokens");
         _;
     }
 }
