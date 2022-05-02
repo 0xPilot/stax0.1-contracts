@@ -92,6 +92,10 @@ contract StaxLPStaking is Ownable {
         return rewardData[_token].periodFinish;
     }
 
+    function earned(address _account, address _rewardsToken) external view returns (uint256) {
+        return _earned(_account, _rewardsToken, _balances[_account]);
+    }
+
     function _earned(
         address _account,
         address _rewardsToken,

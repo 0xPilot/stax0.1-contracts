@@ -241,13 +241,6 @@ contract LPLockerSingle is Ownable {
         _token.safeTransfer(_to, _amount);
     }
 
-    // to execute arbitrary transactions
-    // will remove if there's no found concrete use during tests
-    /*function execute(address _to, bytes calldata _data) external onlyOwner {
-        (bool success,) = _to.call{value:0}(_data);
-        require(success, "execution failed");
-    }*/
-
     modifier isLPManager() {
         require(lpManagers[msg.sender] == true, "not lp manager");
         _;
