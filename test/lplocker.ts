@@ -5,9 +5,11 @@ import { mineForwardSeconds, mineNBlocks, shouldThrow } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
     LPLockerSingle, LPLockerSingle__factory,
-    TempleUniswapV2Pair__factory,
-    FraxUnifiedFarmERC20, FraxUnifiedFarmERC20__factory, 
-    RewardsManager, RewardsManager__factory, StaxLPStaking, StaxLPStaking__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, ERC20, ERC20__factory
+    TempleUniswapV2Pair__factory, 
+    RewardsManager, RewardsManager__factory,
+    StaxLPStaking, StaxLPStaking__factory, 
+    FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory,
+    ERC20, ERC20__factory
 } from "../typechain";
 
 import { lpBigHolderAddress, fraxMultisigAddress, templeMultisigAddress, 
@@ -47,16 +49,13 @@ describe("LP Locker", async () => {
     beforeEach(async () => {
         [owner, minter, alan, validProxy] = await ethers.getSigners();
         // lp token
-        //v2pair = new Contract(lpTokenAddress, TempleUniswapV2Pair__factory.abi);
         v2pair = TempleUniswapV2Pair__factory.connect(lpTokenAddress, owner);
         staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");
         staking = await new StaxLPStaking__factory(owner).deploy(v2pair.address, await alan.getAddress());
-        //lpFarm = new FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory(FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.abi, 
-        //    FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.bytecode).attach("0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16");
         // for off-chain view functions
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
-        locker = await new LPLockerSingle__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address, await owner.getAddress());
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address);
+        locker = await new LPLockerSingle__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address, rewardsManager.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
 
@@ -155,6 +154,7 @@ describe("LP Locker", async () => {
             await locker.stakerToggleMigrator(await owner.getAddress());
         });
 
+
         it("should return right time for max lock", async() => {
             expect(await locker.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
         });
@@ -190,6 +190,8 @@ describe("LP Locker", async () => {
             expect(await lpFarm.lockedStakesOfLength(locker.address)).to.eq(2);
             const newLockedStakes = await lpFarm.lockedStakesOf(locker.address);
             expect(newLockedStakes[1].liquidity).to.eq(40);
+
+            // TODO(pb): harvest rewards and send to rewards Manager and check balances
         });
 
         it("should withdraw lock", async() => {
