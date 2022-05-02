@@ -30,6 +30,20 @@ describe("LP Locker", async () => {
     let fxsToken: ERC20;
     let templeToken: ERC20;
 
+    before( async () => {
+        await network.provider.request({
+            method: "hardhat_reset",
+            params: [
+                {
+                forking: {
+                    jsonRpcUrl: process.env.MAINNET_RPC_URL,
+                    blockNumber: Number(process.env.FORK_BLOCK_NUMBER),
+                },
+            },
+            ],
+        });
+    });
+
     beforeEach(async () => {
         [owner, minter, alan, validProxy] = await ethers.getSigners();
         // lp token
@@ -42,7 +56,7 @@ describe("LP Locker", async () => {
         // for off-chain view functions
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
         locker = await new LPLockerSingle__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address, await owner.getAddress());
-        rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address, locker.address);
+        rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
 
@@ -88,14 +102,14 @@ describe("LP Locker", async () => {
     describe("Locking", async () => {
 
         it("admin tests", async () => {
-            shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).setLPManager(await alan.getAddress(), true), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /Ownable: caller is not the owner/);
             
-            shouldThrow(locker.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
-            shouldThrow(locker.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
+            await shouldThrow(locker.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
 
             // happy paths
             await locker.setLPFarm(lpFarm.address);
@@ -140,7 +154,6 @@ describe("LP Locker", async () => {
         it("should toggle migrator for migration", async () => {
             await locker.stakerToggleMigrator(await owner.getAddress());
         });
-
 
         it("should return right time for max lock", async() => {
             expect(await locker.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
