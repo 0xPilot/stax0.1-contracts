@@ -226,7 +226,8 @@ contract StaxLPStaking is Ownable {
     ) external updateReward(address(0)) {
         require(msg.sender == rewardDistributor, "not distributor");
         require(_amount > 0, "No reward");
-
+        require(rewardData[_rewardsToken].lastUpdateTime != 0, "unknown reward token");
+        
         _notifyReward(_rewardsToken, _amount);
 
         IERC20(_rewardsToken).safeTransferFrom(msg.sender, address(this), _amount);

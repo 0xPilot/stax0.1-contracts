@@ -4,7 +4,7 @@ import { expect } from "chai";
 import { shouldThrow } from "./helpers";
 import { StaxLP, StaxLP__factory } from "../typechain";
 
-describe.only("Stax LP Token", async () => {
+describe("Stax LP Token", async () => {
     let staxToken: StaxLP;
     let owner: Signer
     let minter: Signer
