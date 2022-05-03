@@ -111,7 +111,6 @@ contract StaxLPStaking is Ownable {
     function stake(uint256 _amount)
         public
         updateReward(msg.sender)
-        returns(bool)
     {
         require(_amount > 0, "RewardPool : Cannot stake 0");
         
@@ -121,8 +120,6 @@ contract StaxLPStaking is Ownable {
         _balances[msg.sender] += _amount;
 
         emit Staked(msg.sender, _amount);
-
-        return true;
     }
 
     function stakeAll() external {
