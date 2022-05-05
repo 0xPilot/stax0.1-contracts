@@ -17,6 +17,10 @@ interface IXLPToken {
     function balanceOf(address account) external view returns (uint256);
 }
 
+interface IV2Pair {
+    function getReserves() external view returns (uint112, uint112, uint32);
+}
+
 interface IUniswapRouterV2 {
     function addLiquidity(
         address tokenA,
@@ -36,7 +40,14 @@ interface IUniswapRouterV2 {
         uint amountBMin,
         address to,
         uint deadline
-    ) external; 
+    ) external;
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external;
 }
 
 contract LiquidityOps is Ownable {
@@ -49,6 +60,8 @@ contract LiquidityOps is Ownable {
     IUniswapRouterV2 public router;
 
     address public operator;
+    address public token0;
+    address public token1;
 
     constructor(
         address _lpLocker,
@@ -62,6 +75,8 @@ contract LiquidityOps is Ownable {
         xlpToken = IXLPToken(_xlpToken);
         pair = IERC20(_pair);
         router = IUniswapRouterV2(_router);
+
+        (token0, token1) = _lpToken < _xlpToken ? (_lpToken, _xlpToken) : (_xlpToken, _lpToken);
     }
 
     function setOperator(address _operator) external onlyOwner {
@@ -114,13 +129,54 @@ contract LiquidityOps is Ownable {
         );
     }
 
-    // swap on v2 pair directly
-    /*function swap(address _token, address _target, uint256 _amount, bytes memory _data) external onlyOperator {
-        // optimistically transfer tokens
-        IERC20(_token).safeTransfer(_target, _amount);
-        (bool success,) = _target.call{value:0}(_data);
-        require(success, "swap failed");
-    }*/
+    function swapExactLPForStaxLP(
+        uint256 _amount
+    ) external onlyOperator {
+        uint256 lpBalance = lpToken.balanceOf(address(this));
+        require(lpBalance >= _amount, "not enough tokens");
+        address[] memory path = new address[](2);
+        path[0] = address(lpToken);
+        path[1] = address(xlpToken);
+
+        _swap(_amount, path);
+    }
+
+    function swapExactStaxLPForLP(
+        uint256 _amount
+    ) external onlyOperator {
+        uint256 xlpBalance = xlpToken.balanceOf(address(this));
+        require(xlpBalance >= _amount, "not enough tokens");
+        address[] memory path = new address[](2);
+        path[0] = address(xlpToken);
+        path[1] = address(lpToken);
+
+        _swap(_amount, path);
+    }
+
+    function _swap(
+        uint256 _amount,
+        address[] memory _path
+    ) internal {
+        (uint112 reserve0, uint112 reserve1,) = IV2Pair(address(pair)).getReserves();
+        (uint112 reserveA, uint112 reserveB) = _path[0] == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
+        uint256 amountOutMin = _getAmountOut(_amount, reserveA, reserveB);
+        router.swapExactTokensForTokens(
+            _amount,
+            amountOutMin,
+            _path,
+            address(this),
+            block.timestamp + 10
+        );
+    }
+
+     // given an input amount of an asset and pair reserves, returns the maximum output amount of the other asset
+    function _getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
+        require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reserveOut;
+        uint256 denominator = (reserveIn * 1000) + amountInWithFee;
+        amountOut = numerator / denominator;
+    }
 
     function pullReserveLPTokens(uint256 _amount) external {
         uint256 lockerBalance = lpToken.balanceOf(address(lpLocker));
