@@ -31,7 +31,7 @@ interface IUniswapRouterV2 {
         uint amountBMin,
         address to,
         uint deadline
-    ) external;
+    ) external returns (uint amountA, uint amountB, uint liquidity);
     function removeLiquidity(
         address tokenA,
         address tokenB,
@@ -40,14 +40,14 @@ interface IUniswapRouterV2 {
         uint amountBMin,
         address to,
         uint deadline
-    ) external;
+    ) external returns (uint amountA, uint amountB);
     function swapExactTokensForTokens(
         uint amountIn,
         uint amountOutMin,
         address[] calldata path,
         address to,
         uint deadline
-    ) external;
+    ) external returns (uint[] memory amounts);
 }
 
 contract LiquidityOps is Ownable {
@@ -62,6 +62,10 @@ contract LiquidityOps is Ownable {
     address public operator;
     address public token0;
     address public token1;
+
+    event ReservesPulled(uint256 amount);
+    event LiquidityAdded(uint256 amountA, uint256 amountB, uint256 liquidity);
+    event LiquidityRemoved(uint256 amountA, uint256 amountB);
 
     constructor(
         address _lpLocker,
@@ -98,7 +102,7 @@ contract LiquidityOps is Ownable {
 
         lpToken.safeIncreaseAllowance(address(router), _lpAmountDesired);
         IERC20(address(xlpToken)).safeIncreaseAllowance(address(router), _xlpAmountDesired);
-        router.addLiquidity(
+        (uint amountA, uint amountB, uint liquidity) = router.addLiquidity(
             address(lpToken),
             address(xlpToken),
             _lpAmountDesired,
@@ -108,6 +112,8 @@ contract LiquidityOps is Ownable {
             address(this),
             block.timestamp + 10
         );
+
+        emit LiquidityAdded(amountA, amountB, liquidity);
     }
 
     function removeLiquidity(
@@ -118,7 +124,7 @@ contract LiquidityOps is Ownable {
         uint256 balance = pair.balanceOf(address(this));
         require(balance >= _liquidity, "not enough tokens");
         pair.safeIncreaseAllowance(address(router), _liquidity);
-        router.removeLiquidity(
+        (uint256 amountA, uint256 amountB) = router.removeLiquidity(
             address(lpToken),
             address(xlpToken),
             _liquidity,
@@ -127,6 +133,8 @@ contract LiquidityOps is Ownable {
             address(this),
             block.timestamp + 10
         );
+
+        emit LiquidityRemoved(amountA, amountB);
     }
 
     function swapExactLPForStaxLP(
@@ -187,6 +195,8 @@ contract LiquidityOps is Ownable {
         lpLocker.withdrawLPToken(_amount);
         // also mint amount of xlp tokens
         xlpToken.mint(address(this), _amount);
+
+        emit ReservesPulled(_amount);
     }
 
 
