@@ -1,10 +1,9 @@
 import { ethers, network } from "hardhat";
 import { Contract, Signer, BigNumber } from "ethers";
 import { expect } from "chai";
-import { mineForwardSeconds, mineNBlocks, shouldThrow } from "./helpers";
+import { mineForwardSeconds, shouldThrow } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
-    //LPLockerSingle, LPLockerSingle__factory,
     TempleUniswapV2Pair__factory, 
     RewardsManager, RewardsManager__factory,
     StaxLPStaking, StaxLPStaking__factory, 
@@ -31,7 +30,6 @@ describe("Liquidity Ops", async () => {
     let fraxMultisig: Signer;
     let templeMultisig: Signer;
     let v2pair: Contract; //TempleUniswapV2Pair
-    //let locker: LPLockerSingle;
     let lpFarm: Contract; //FraxUnifiedFarmERC20;
     let rewardsManager: RewardsManager;
     let staking: StaxLPStaking;
@@ -173,8 +171,11 @@ describe("Liquidity Ops", async () => {
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)']; // this causing error in before each hook
             await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
 
-            //console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress()));
-            //console.log("Curve Pool Total Supply:", await curvePool.totalSupply());
+            // to counter "transaction run out of gas errors"
+            // When using this plugin, the `gas`, `gasPrice` and `gasMultiplier` parameters from your `hardhat.config` 
+            // are not automatically applied to transactions
+            console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress(), {gasLimit: 50000}));
+            console.log("Curve Pool Total Supply:", await curvePool.totalSupply({gasLimit: 50000}));
         }
     });
 
@@ -283,11 +284,12 @@ describe("Liquidity Ops", async () => {
             
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(100);
 
-            // debugging: get virtual price before and after adding liquidity directly from msig
-            console.log("virtual price ", await curvePool.get_virtual_price());
+            // get virtual price before and after adding liquidity directly from msig
+            const virtualPriceBefore = await curvePool.get_virtual_price();
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
-            console.log("new virtual price", await curvePool.get_virtual_price());
+            const virtualPriceAfter = await curvePool.get_virtual_price();
+            expect(virtualPriceAfter).to.eq(virtualPriceBefore);
             //const tolerancePct = BigNumber.from("10000000000")
             //    .sub(await liquidityOps.curveLiquiditySlippage())
             //    .sub(await curvePool.fee());
@@ -302,12 +304,6 @@ describe("Liquidity Ops", async () => {
                 .withArgs(0.2*100, 0.2*100, 40);
             
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
-
-            // // 80% of LP into the lpFarm and equiv xLP minted, 20% remains as LP in the locker.
-            // expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(100);
-            // expect(await staxLPToken.balanceOf(locker.address)).to.eq(20);
-            //expect(await v2pair.balanceOf(locker.address)).to.eq(0.2*100);
-
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(0.8*100);
 
             const lockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
@@ -327,11 +323,6 @@ describe("Liquidity Ops", async () => {
             // await expect(locker.connect(alan).lock(50)).to.emit(locker, "Locked").withArgs(await alan.getAddress(), 40, 10);
             // expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
 
-            // // validate locker's lock
-            // expect(await lpFarm.lockedLiquidityOf(locker.address)).to.eq(120);
-            // expect(await locker.lockTimeForMaxMultiplier()).to.eq(lockedStake.ending_timestamp - lockedStake.start_timestamp);
-            // expect(lockedStake.lock_multiplier).to.eq(BigNumber.from("3000000000000000000"));
-
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
 
@@ -342,14 +333,6 @@ describe("Liquidity Ops", async () => {
             expect(await lpFarm.lockedStakesOfLength(liquidityOps.address)).to.eq(2);
             const newLockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
             expect(newLockedStakes[1].liquidity).to.eq(0.8*50);
-
-            // // Verify the ratios
-            // expect(await locker.totalXlpMintedForLiquidity()).eq(200*0.2);
-            // const userLockedData = await locker.userLockedData(await alan.getAddress());
-            // expect(userLockedData.xlpMintedForLiquidity).eq(200*0.2);
-            // expect(userLockedData.xlpMintedForLock).eq(200*0.8);
-            
-            // TODO(pb): harvest rewards and send to rewards Manager and check balances
         });
 
         it("multiple users locking", async() => {
@@ -396,20 +379,6 @@ describe("Liquidity Ops", async () => {
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(lockedLiquidityBefore.add(0.9*(150)));
             // normalized price
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
-
-            //const lockedStakes = await lpFarm.lockedStakesOf(locker.address);
-            //const lockedStake = lockedStakes[0];
-            //expect(lockedStake.liquidity).eq(100*0.8 + 50*0.9 + 100*0.9);
-
-            // Verify the ratios
-            /*expect(await locker.totalXlpMintedForLiquidity()).eq(100*0.2 + 50*0.1 + 100*0.1);
-            const alanLockedData = await locker.userLockedData(await alan.getAddress());
-            expect(alanLockedData.xlpMintedForLiquidity).eq(100*0.2 + 50*0.1);
-            expect(alanLockedData.xlpMintedForLock).eq(100*0.8 + 50*0.9);
-
-            const frankLockedData = await locker.userLockedData(await frank.getAddress());
-            expect(frankLockedData.xlpMintedForLiquidity).eq(100*0.1);
-            expect(frankLockedData.xlpMintedForLock).eq(100*0.9);*/
         });
 
         it("removes liquidity", async () => {
@@ -441,92 +410,60 @@ describe("Liquidity Ops", async () => {
             expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.eq(liquidityBefore.sub(10));
         });
 
-    it.only("should withdraw and relock", async() => {
-        // lock
-        await liquidityOps.setLockParams(80, 100);
-        await v2pair.connect(alan).approve(locker.address, 300);
-        await staxLPToken.addMinter(liquidityOps.address);
-        await staxLPToken.addMinter(locker.address);
-        await locker.connect(alan).lock(100);
+        it("should withdraw and relock", async() => {
+            // lock
+            await liquidityOps.setLockParams(80, 100);
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await staxLPToken.addMinter(liquidityOps.address);
+            await staxLPToken.addMinter(locker.address);
+            await locker.connect(alan).lock(100);
 
-        // fast forward to end of locktime
-        await mineForwardSeconds(7 * 86400);
+            // fast forward to end of locktime
+            await mineForwardSeconds(7 * 86400);
 
-        //await locker.connect(alan).lock(50);
-        const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-        await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
-        await liquidityOps.applyLiquidity();
+            //await locker.connect(alan).lock(50);
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
+            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
+            await liquidityOps.applyLiquidity();
 
-        // fast forward to end of locktime
-        await mineForwardSeconds(8 * 86400);
+            // fast forward to end of locktime
+            await mineForwardSeconds(8 * 86400);
 
-        // new lock stake
-        const lockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
-        const lockedStake = lockedStakes[0];
-        const kekId = lockedStake.kek_id;
-        // withdraw and expect relock
-        await expect(liquidityOps.withdrawAndRelock(kekId))
-            .to.emit(liquidityOps, "WithdrawAndReLock")
-            .withArgs(kekId, lockedStake.liquidity);
+            // new lock stake
+            const lockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
+            const lockedStake = lockedStakes[0];
+            const kekId = lockedStake.kek_id;
+            // withdraw and expect relock
+            await expect(liquidityOps.withdrawAndRelock(kekId))
+                .to.emit(liquidityOps, "WithdrawAndReLock")
+                .withArgs(kekId, lockedStake.liquidity);
 
-        let newLockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
-        // liquidity should remain the same due to relock
-        expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(80);
-            
-        // "deleted" old stake values should be null
-        expect(newLockedStakes[0].start_timestamp).to.eq(0);
-        expect(newLockedStakes[0].liquidity).to.eq(0);
-        expect(newLockedStakes[0].ending_timestamp).to.eq(0);
-        expect(newLockedStakes[0].lock_multiplier).to.eq(0);
-    });
+            let newLockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
+            // liquidity should remain the same due to relock
+            expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(80);
+                
+            // "deleted" old stake values should be null
+            expect(newLockedStakes[0].start_timestamp).to.eq(0);
+            expect(newLockedStakes[0].liquidity).to.eq(0);
+            expect(newLockedStakes[0].ending_timestamp).to.eq(0);
+            expect(newLockedStakes[0].lock_multiplier).to.eq(0);
 
-    //     it("lp manager withdraws lp token reserves", async () => {
-    //         // lock and withdraw reserves
-    //         // case first lock
-    //         await locker.setLockParams(80, 100);
-    //         await v2pair.connect(alan).approve(locker.address, 300);
-    //         await staxLPToken.addMinter(locker.address);
-    //         await locker.connect(alan).lock(100);
-    //         await locker.connect(alan).lock(100);
-            
-    //         // check reserves
-    //         expect(await v2pair.balanceOf(locker.address)).to.eq(40);
-    //         const lpBalanceLocker = await v2pair.balanceOf(locker.address);
-    //         const lpBalanceManager = await v2pair.balanceOf(await alan.getAddress());
-    //         console.log("bal of lp manager before withdrawing ", await v2pair.balanceOf(await alan.getAddress()));
-    //         // withdraw reserves
-    //         await locker.connect(alan).withdrawLPToken(lpBalanceLocker);
-    //         expect(await v2pair.balanceOf(await alan.getAddress())).to.eq(lpBalanceLocker.add(lpBalanceManager));
-    //     });
-
-    //     it("only one active locked stake exists over time", async () => {
-    //         // lock twice
-    //         await v2pair.connect(alan).approve(locker.address, 300);
-    //         await staxLPToken.addMinter(locker.address);
-    //         await locker.connect(alan).lock(100);
-    //         await locker.connect(alan).lock(100);
-
-    //         expect(await lpFarm.lockedStakesOfLength(locker.address)).eq(1);
-
-    //         // fast forward to end of locktime
-    //         await mineForwardSeconds(7 * 86400);
-
-    //         const lockedStakes = await lpFarm.lockedStakesOf(locker.address);
-    //         expect(lockedStakes.length).eq(1);
-            
-    //         const lockedStake = lockedStakes[0];
-    //         const kekId = lockedStake.kek_id;
-    //         await locker.connect(alan).lock(50);
-    //         let newLockedStakes = await lpFarm.lockedStakesOf(locker.address);
-    //       //  const liquidity = await lpFarm.lockedLiquidityOf(locker.address);
-
-    //         expect(newLockedStakes.lentgh).eq(2);
-
-    //         await expect(locker.withdrawAndRelock(kekId))
-    //            .to.emit(locker, "WithdrawAndReLock")
-    //            .withArgs(kekId, lockedStake.liquidity);
-
-    //     });
+            // lock, fast forward and relock again to ensure only one active lock
+            await locker.connect(alan).lock(50);
+            await liquidityOps.applyLiquidity();
+            await mineForwardSeconds(8 * 86400);
+            await liquidityOps.withdrawAndRelock(newLockedStakes[1].kek_id);
+            newLockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
+            expect(newLockedStakes.length).to.eq(3);
+            expect(newLockedStakes[0].start_timestamp).to.eq(0);
+            expect(newLockedStakes[0].liquidity).to.eq(0);
+            expect(newLockedStakes[0].ending_timestamp).to.eq(0);
+            expect(newLockedStakes[0].lock_multiplier).to.eq(0);
+            expect(newLockedStakes[1].start_timestamp).to.eq(0);
+            expect(newLockedStakes[1].liquidity).to.eq(0);
+            expect(newLockedStakes[1].ending_timestamp).to.eq(0);
+            expect(newLockedStakes[1].lock_multiplier).to.eq(0);
+        });
 
     });
 
