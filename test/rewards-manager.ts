@@ -11,7 +11,7 @@ import {
 
 import { lpTokenAddress, fxsTokenAddress, fraxMultisigAddress } from "./addresses";
 
-describe.only("Rewards Manager", async () => {
+describe("Rewards Manager", async () => {
     let owner: Signer;
     let alan: Signer;
     let v2pair: Contract; //TempleUniswapV2Pair

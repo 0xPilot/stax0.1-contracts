@@ -4,10 +4,14 @@ import { expect } from "chai";
 import { mineForwardSeconds, mineNBlocks, shouldThrow } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
-    LPLockerSingle, LPLockerSingle__factory,
+    LockerProxy, LockerProxy__factory,
+  //  LPLockerSingle, LPLockerSingle__factory,
     TempleUniswapV2Pair__factory,
     FraxUnifiedFarmERC20, FraxUnifiedFarmERC20__factory, 
-    RewardsManager, RewardsManager__factory, StaxLPStaking, StaxLPStaking__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, ERC20, ERC20__factory
+    RewardsManager, RewardsManager__factory, 
+    StaxLPStaking, StaxLPStaking__factory, 
+    FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
+    ERC20, ERC20__factory
 } from "../typechain";
 import { fraxMultisigAddress, fraxUnifiedFarmAddress, fxsTokenAddress, lpBigHolderAddress, lpTokenAddress, templeMultisigAddress, templeTokenAddress } from "./addresses";
 
@@ -19,7 +23,7 @@ describe("LP Locker", async () => {
     let fraxMultisig: Signer;
     let templeMultisig: Signer;
     let v2pair: Contract; //TempleUniswapV2Pair
-    let locker: LPLockerSingle;
+    let locker: LockerProxy;
     let lpFarm: Contract; //FraxUnifiedFarmERC20;
     let rewardsManager: RewardsManager;
     let staking: StaxLPStaking;

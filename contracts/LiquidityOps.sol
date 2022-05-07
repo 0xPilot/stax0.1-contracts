@@ -6,14 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 
-interface ILPLocker {
-    function withdrawLPToken(uint256 _amount) external;
-}
-
 interface IXLPToken {
     function mint(address to, uint256 amount) external;
-    function burn(address account, uint256 amount) external;
-    function balanceOf(address account) external view returns (uint256);
 }
 
 /// @dev interface of the frax gauge. Based on FraxUnifiedFarmTemplate.sol
@@ -31,59 +25,57 @@ interface IUnifiedFarm {
     function getReward(address destination_address) external returns (uint256[] memory);
     function withdrawLocked(bytes32 kek_id, address destination_address) external;
     function lockAdditional(bytes32 kek_id, uint256 addl_liq) external;
-    function proxyToggleStaker(address staker_address) external;
     function stakerSetVeFXSProxy(address proxy_address) external;
     function stakerToggleMigrator(address migrator_address) external;
     function lock_time_for_max_multiplier() external view returns (uint256);
     function getAllRewardTokens() external view returns (address[] memory);
-    function lockedStakes(address account) external view returns (LockedStake[] memory);
     function lockedLiquidityOf(address account) external view returns (uint256);
     function lockedStakesOf(address account) external view returns (LockedStake[] memory);
-    function lockedStakesOfLength(address account) external view returns (uint256);
 }
 
+/// @dev interface of the curve stable swap.
 interface IStableSwap {
     function coins(uint256 j) external view returns (address);
-
     function calc_token_amount(uint256[2] calldata _amounts, bool _is_deposit) external view returns (uint256);
-
-    function add_liquidity(
-        uint256[2] calldata _amounts,
-        uint256 _min_mint_amount
-    ) external returns (uint256);
-
-    function get_dy(
-        int128 _from,
-        int128 _to,
-        uint256 _from_amount
-    ) external view returns (uint256);
-
+    function add_liquidity(uint256[2] calldata _amounts, uint256 _min_mint_amount) external returns (uint256);
+    function get_dy(int128 _from, int128 _to, uint256 _from_amount) external view returns (uint256);
     function remove_liquidity(uint256 _amount, uint256[2] calldata _min_amounts) external returns (uint256[2] memory);
+    function fee() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
 }
-
 
 contract LiquidityOps is Ownable {
     using SafeERC20 for IERC20;
 
-    IUnifiedFarm public lpFarm; // frax unified lp farm
-    IXLPToken public xlpToken;
-    IERC20 public lpToken;
-    IStableSwap public curvePool;
-    IERC20 public curveToken;
+    IUnifiedFarm public lpFarm;          // frax unified lp farm
+    IXLPToken public xlpToken;           // stax lp receipt;
+    IERC20 public lpToken;               // lp pair token
+
+    // curve pool for (xlp, lp) pair. This is an ERC20, 
+    // and gets minted/burnt when new liquidity is added/removed in the pool.
+    IStableSwap public curveStableSwap;
+
     address public rewardsManager;
 
     address public operator;
+    bool public curveStableSwap0IsXlpToken; // The order of curve pool tokens
+
+    // How much of user LP do we add into gauge.
+    // The remainder is added as liquidity into curve pool
+    LockRate public lockRate;  
 
     struct LockRate {
         uint128 numerator;
         uint128 denominator;
     }
-    LockRate public lockRate;
 
     // fxs emissions + random token extra bribe
     IERC20[] public rewardTokens;
 
-    uint256 public curveLiquidityTolerancePct;
+    // Slippage on expected curve liquidity tokens when adding liquidity into curve.
+    // Don't include fees in this - they are already auto-added into the tolerance.
+    // 1e10 precision (same as curve fees) - so 1% = 1e8, 100% = 1e10
+    uint256 public curveLiquiditySlippage;
 
     event SetLockParams(uint128 numerator, uint128 denominator);
     event Locked(uint256 amountLocked);
@@ -95,26 +87,31 @@ contract LiquidityOps is Ownable {
     event SetVeFXSProxy(address proxy);
     event MigratorToggled(address migrator);
     event RewardsManagerSet(address manager);
-  
+    event CurveStableSwap0IsXlpToken(bool curveStableSwap0IsXlpToken);
+    event TokenRecovered(address user, uint256 amount);
+
     constructor(
         address _lpFarm,
         address _lpToken,
         address _xlpToken,
-        address _curvePool,
-        address _curveToken,
+        address _curveStableSwap,
         address _rewardsManager
     ) {
         lpFarm = IUnifiedFarm(_lpFarm);
         lpToken = IERC20(_lpToken);
         xlpToken = IXLPToken(_xlpToken);
-        curvePool = IStableSwap(_curvePool);
-        curveToken = IERC20(_curveToken);
+        curveStableSwap = IStableSwap(_curveStableSwap);
         rewardsManager = _rewardsManager;
-        curveLiquidityTolerancePct = 99;
+        curveLiquiditySlippage = 10**8; // 1% slippage
     }
 
     function setOperator(address _operator) external onlyOwner {
         operator = _operator;
+    }
+
+    function setCurvePool0() external {
+        curveStableSwap0IsXlpToken = curveStableSwap.coins(0) == address(xlpToken);
+        emit CurveStableSwap0IsXlpToken(curveStableSwap0IsXlpToken);
     }
 
     function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
@@ -125,9 +122,9 @@ contract LiquidityOps is Ownable {
         emit SetLockParams(_numerator, _denominator);
     }
 
-    function setParams(uint256 _curveLiquidityTolerancePct) external onlyOwner {
-        require(_curveLiquidityTolerancePct > 0 && _curveLiquidityTolerancePct <= 100, "invalid percentage");
-        curveLiquidityTolerancePct = _curveLiquidityTolerancePct;
+    function setOtherParams(uint256 _curveLiquiditySlippage) external onlyOwner {
+        require(_curveLiquiditySlippage > 0 && _curveLiquiditySlippage <= 10**10, "invalid percentage");
+        curveLiquiditySlippage = _curveLiquiditySlippage;
     }
 
     function setRewardsManager(address _manager) external onlyOwner {
@@ -172,24 +169,36 @@ contract LiquidityOps is Ownable {
         emit Locked(liquidity);
     }
 
-    function addLiquidity(uint256 liquidity) private {
+    function addLiquidity(uint256 lpAmount) private {
         // Get the amount of xLP needed to add into the liquidity pool
         // such that the price remains about the same - don't apply any peg fixing here.
-        // Use the curve pool to check which index is xlp vs lp
-        uint256 xlpAmount = curvePool.coins(0) == address(xlpToken) 
-            ? curvePool.get_dy(1, 0, liquidity) 
-            : curvePool.get_dy(0, 1, liquidity);
         
+        uint256 xlpAmount;
+        uint256[2] memory amounts;
+        if (curveStableSwap0IsXlpToken) {
+            // from=lpToken, to=xlptoken
+            xlpAmount = curveStableSwap.get_dy(1, 0, lpAmount);
+            amounts = [xlpAmount, lpAmount];
+        } else {
+            xlpAmount = curveStableSwap.get_dy(0, 1, lpAmount);
+            amounts = [lpAmount, xlpAmount];
+        }
+
         // Mint the new xLP
         xlpToken.mint(address(this), xlpAmount);
-
-        uint256[2] memory amounts = [xlpAmount, liquidity];
         
-        // The min token amount we're willing to accept
-        uint256 minCurveTokenAmount = curvePool.calc_token_amount(amounts, true) * curveLiquidityTolerancePct / 100;
-        uint256 curveTokenAmount = curvePool.add_liquidity(amounts, minCurveTokenAmount);
+        lpToken.safeIncreaseAllowance(address(curveStableSwap), lpAmount);
 
-        emit LiquidityAdded(liquidity, xlpAmount, curveTokenAmount);
+        // TODO: A better way to get access to safeIncreaseAllowance?
+        IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), xlpAmount);
+
+        // The min token amount we're willing to accept
+        // Takes into consideration a acceptable slippage + the curve pool fee
+        uint256 tolerancePct = 10**10 - curveLiquiditySlippage - curveStableSwap.fee();
+        uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / 10**10;
+        uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount);
+
+        emit LiquidityAdded(lpAmount, xlpAmount, liquidity);
     }
 
     function removeLiquidity(
@@ -197,26 +206,24 @@ contract LiquidityOps is Ownable {
         uint256 _lpAmountMin,
         uint256 _xlpAmountMin
     ) external onlyOperator {
-        uint256 balance = curveToken.balanceOf(address(this));
+        uint256 balance = curveStableSwap.balanceOf(address(this));
         require(balance >= _liquidity, "not enough tokens");
-        curveToken.safeIncreaseAllowance(address(curvePool), _liquidity);
 
-        bool xlpIsFirst = curvePool.coins(0) == address(xlpToken);
-        uint256[2] memory minAmounts = xlpIsFirst 
-            ? [_xlpAmountMin, _lpAmountMin]
-            : [_lpAmountMin, _xlpAmountMin];
-
-        uint256[2] memory balances = curvePool.remove_liquidity(_liquidity, minAmounts);
-
-        // Switch the order if necessary so [lp, xlp]
-        uint256[2] memory balancesInOrder = xlpIsFirst
-            ? [ balances[1], balances[0] ]
-            : balances;
+        uint256 receivedXlpAmount;
+        uint256 receivedLpAmount;
+        if (curveStableSwap0IsXlpToken) {
+            uint256[2] memory balances = curveStableSwap.remove_liquidity(_liquidity, [_xlpAmountMin, _lpAmountMin]);
+            receivedXlpAmount = balances[0];
+            receivedLpAmount = balances[1];
+        } else {
+            uint256[2] memory balances = curveStableSwap.remove_liquidity(_liquidity, [_lpAmountMin, _xlpAmountMin]);
+            receivedXlpAmount = balances[1];
+            receivedLpAmount = balances[0];
+        }
         
-        emit LiquidityRemoved(balancesInOrder[0], balancesInOrder[1], _liquidity);
+        emit LiquidityRemoved(receivedLpAmount, receivedXlpAmount, _liquidity);
     }
 
-    // Permissionless.
     function applyLiquidity() external {
         uint256 availableLiquidity = lpToken.balanceOf(address(this));
         require(availableLiquidity > 0, "not enough liquidity");
@@ -294,6 +301,24 @@ contract LiquidityOps is Ownable {
         lpFarm.stakerToggleMigrator(_migrator);
 
         emit MigratorToggled(_migrator);
+    }
+
+    // recover tokens except reward tokens
+    // for reward tokens use harvestRewards instead
+    function recoverToken(address _token, address _to, uint256 _amount) external onlyOwner {
+        for (uint i=0; i<rewardTokens.length; i++) {
+            require(_token != address(rewardTokens[i]), "can't recover reward token this way");
+        }
+
+        _transferToken(IERC20(_token), _to, _amount);
+
+        emit TokenRecovered(_to, _amount);
+    }
+
+    function _transferToken(IERC20 _token, address _to, uint256 _amount) internal {
+        uint256 balance = _token.balanceOf(address(this));
+        require(_amount <= balance, "not enough tokens");
+        _token.safeTransfer(_to, _amount);
     }
 
     modifier onlyOperator() {
