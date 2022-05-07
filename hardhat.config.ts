@@ -55,6 +55,9 @@ module.exports = {
       },
     ],
   },
+  vyper: {
+    compilers: [{ version: "0.2.15" }, { version: "0.3.0" }],
+  },
   typechain: {
     target: 'ethers-v5',
     outDir: './typechain',
