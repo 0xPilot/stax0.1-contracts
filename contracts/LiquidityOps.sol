@@ -4,7 +4,7 @@ pragma solidity ^0.8.4;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "hardhat/console.sol";
+//import "hardhat/console.sol";
 
 
 interface IXLPToken {
@@ -199,14 +199,6 @@ contract LiquidityOps is Ownable {
         // Takes into consideration a acceptable slippage + the curve pool fee
         uint256 tolerancePct = 10**10 - curveLiquiditySlippage - curveStableSwap.fee();
         uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / 10**10;
-        console.logString("mIN CURVE TOKEN AMOUNT");
-        console.logUint(minCurveTokenAmount);
-        console.logUint(curveStableSwap.calc_token_amount(amounts, true));
-        console.logUint(amounts[0]);
-        console.logUint(amounts[1]);
-        console.logUint(lpToken.balanceOf(address(curveStableSwap)));
-        console.logUint(IERC20(address(xlpToken)).balanceOf(address(curveStableSwap)));
-        console.logUint(curveStableSwap.get_virtual_price());
         uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount, address(this));
 
         emit LiquidityAdded(lpAmount, xlpAmount, liquidity);
@@ -276,7 +268,6 @@ contract LiquidityOps is Ownable {
         } else {
             lpFarm.lockAdditional(lockedStakes[lockedStakesLength - 1].kek_id, lockAmount);
         }
-        //lpFarm.lockAdditional(lockedStakes[lockedStakesLength - 1].kek_id, lockAmount);
 
         emit WithdrawAndReLock(_oldKekId, lockAmount);
     }
