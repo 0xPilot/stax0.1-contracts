@@ -5,6 +5,7 @@ import '@typechain/hardhat';
 import '@nomiclabs/hardhat-ganache'; // for testing
 import '@nomiclabs/hardhat-ethers';
 import '@nomiclabs/hardhat-etherscan';
+import "@nomiclabs/hardhat-vyper";
 
 // NOTE: Any tasks that depend on the generated typechain makes the build flaky.
 //       Favour scripts instead

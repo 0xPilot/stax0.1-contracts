@@ -4,6 +4,7 @@ pragma solidity ^0.8.4;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+//import "hardhat/console.sol";
 
 
 interface IXLPToken {
@@ -37,11 +38,12 @@ interface IUnifiedFarm {
 interface IStableSwap {
     function coins(uint256 j) external view returns (address);
     function calc_token_amount(uint256[2] calldata _amounts, bool _is_deposit) external view returns (uint256);
-    function add_liquidity(uint256[2] calldata _amounts, uint256 _min_mint_amount) external returns (uint256);
+    function add_liquidity(uint256[2] calldata _amounts, uint256 _min_mint_amount, address destination) external returns (uint256);
     function get_dy(int128 _from, int128 _to, uint256 _from_amount) external view returns (uint256);
     function remove_liquidity(uint256 _amount, uint256[2] calldata _min_amounts) external returns (uint256[2] memory);
     function fee() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
+    function get_virtual_price() external view returns (uint256);
 }
 
 contract LiquidityOps is Ownable {
@@ -196,7 +198,7 @@ contract LiquidityOps is Ownable {
         // Takes into consideration a acceptable slippage + the curve pool fee
         uint256 tolerancePct = 10**10 - curveLiquiditySlippage - curveStableSwap.fee();
         uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / 10**10;
-        uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount);
+        uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount, address(this));
 
         emit LiquidityAdded(lpAmount, xlpAmount, liquidity);
     }
