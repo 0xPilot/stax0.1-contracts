@@ -12,14 +12,14 @@ import {
     ERC20, ERC20__factory,
     LiquidityOps, LiquidityOps__factory,
     LockerProxy, LockerProxy__factory,
+    CurveFactory__factory,
+    CurvePool__factory
 } from "../typechain";
 
 import { lpBigHolderAddress, fraxMultisigAddress, templeMultisigAddress, 
     fraxUnifiedFarmAddress, lpTokenAddress, fxsTokenAddress, templeTokenAddress, 
     curveFactoryAddress } from "./addresses";
 
-import * as curveFactoryJson from './abi/curve-factory.json';
-import * as curveStableSwapJson from './abi/curve-stable-swap.json';
 
 describe("Liquidity Ops", async () => {
     let staxLPToken: StaxLP;
@@ -69,7 +69,7 @@ describe("Liquidity Ops", async () => {
 
         // Create the curve stable swap
         {
-            curveFactory = (await ethers.getContractAt(JSON.parse(curveFactoryJson.result), curveFactoryAddress, owner));
+            curveFactory = CurveFactory__factory.connect(curveFactoryAddress, owner);
             
             const numPoolsBefore = await curveFactory.pool_count();
 
@@ -85,8 +85,8 @@ describe("Liquidity Ops", async () => {
             const implementationIndex = 3;
             // The deploy_plain_pool doesn't get added to the object correctly from the ABI (perhaps because it's overloaded)
             // We need to call it by name
-            const deploy_plain_pool_fn = curveFactory.functions['deploy_plain_pool(string,string,address[4],uint256,uint256,uint256,uint256)'];
-            const tx = await expect(deploy_plain_pool_fn("STAX TEMPLE/FRAX xLP + LP", "xTFLP+TFLP", coins, A, fee, assetType, implementationIndex))
+            await expect(curveFactory.functions['deploy_plain_pool(string,string,address[4],uint256,uint256,uint256,uint256)']
+                ("STAX TEMPLE/FRAX xLP + LP", "xTFLP+TFLP", coins, A, fee, assetType, implementationIndex))
                 .to.emit(curveFactory, "PlainPoolDeployed")
                 .withArgs(coins, A, fee, await owner.getAddress());
             
@@ -97,7 +97,7 @@ describe("Liquidity Ops", async () => {
             const curvePoolAddress = curvePoolAddresses[0];
             expect(curvePoolAddress).not.eq(ZERO_ADDRESS);
 
-            curvePool = (await ethers.getContractAt(JSON.parse(curveStableSwapJson.result), curvePoolAddress, owner));
+            curvePool = CurvePool__factory.connect(curvePoolAddress, owner);
             expect((await curvePool.name())).eq('Curve.fi Factory Plain Pool: STAX TEMPLE/FRAX xLP + LP');
         }
 
@@ -170,11 +170,11 @@ describe("Liquidity Ops", async () => {
                 value: ethers.utils.parseEther("0.2"),
               });
 
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([10000, 10000], 1, await templeMultisig.getAddress());
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)']; // this causing error in before each hook
+            await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
 
-            console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress()));
-            console.log("Curve Pool Total Supply:", await curvePool.totalSupply());
+            //console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress()));
+            //console.log("Curve Pool Total Supply:", await curvePool.totalSupply());
         }
     });
 
@@ -280,6 +280,12 @@ describe("Liquidity Ops", async () => {
             
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(100);
             
+            // debugging: get virtual price before and after adding liquidity directly from msig
+            console.log("virtual price ", await curvePool.get_virtual_price());
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
+            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
+            console.log("new virtual price", await curvePool.get_virtual_price());
+
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100);
@@ -304,7 +310,7 @@ describe("Liquidity Ops", async () => {
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(50);
 
             await liquidityOps.applyLiquidity();
-            expect(await v2pair.balanceOf(liquidityOps.address)).eq(10);
+            expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
 
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(0.8*(100+50));
             expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(lockedStake.ending_timestamp - lockedStake.start_timestamp);
