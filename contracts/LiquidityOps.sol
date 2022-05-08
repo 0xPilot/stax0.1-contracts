@@ -159,8 +159,7 @@ contract LiquidityOps is Ownable {
         // if first time lock
         IUnifiedFarm.LockedStake[] memory lockedStakes = lpFarm.lockedStakesOf(address(this));
         uint256 lockedStakesLength = lockedStakes.length;
-        console.logString("lock in gauge");
-        console.logUint(lockedStakesLength);
+
         // we want to lock additional if lock end time not expired
         // check last lockedStake if expired
         if (lockedStakesLength == 0 || block.timestamp >= lockedStakes[lockedStakesLength - 1].ending_timestamp) {

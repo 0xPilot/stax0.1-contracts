@@ -159,8 +159,8 @@ describe("Liquidity Ops", async () => {
             await staxLPToken.addMinter(await templeMultisig.getAddress());
             await staxLPToken.connect(templeMultisig).mint(await templeMultisig.getAddress(), 10000);
 
-            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 10000);
-            await v2pair.connect(templeMultisig).approve(curvePool.address, 10000);
+            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 9000);
+            await v2pair.connect(templeMultisig).approve(curvePool.address, 9000);
 
             // Send the msig some eth for the transaction.
             await owner.sendTransaction({
@@ -174,12 +174,12 @@ describe("Liquidity Ops", async () => {
             // to counter "transaction run out of gas errors"
             // When using this plugin, the `gas`, `gasPrice` and `gasMultiplier` parameters from your `hardhat.config` 
             // are not automatically applied to transactions
-            console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress(), {gasLimit: 50000}));
-            console.log("Curve Pool Total Supply:", await curvePool.totalSupply({gasLimit: 50000}));
+            //console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress(), {gasLimit: 50000}));
+            //console.log("Curve Pool Total Supply:", await curvePool.totalSupply({gasLimit: 50000}));
         }
     });
 
-    describe.only("Liquidity", async () => {
+    describe("Liquidity", async () => {
         it("admin tests", async () => {
             await shouldThrow(liquidityOps.connect(alan).setOperator(await frank.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
@@ -275,34 +275,36 @@ describe("Liquidity Ops", async () => {
         it("should lock rightly", async() => {
             // Need to add both the locker and liquidity ops as xlp minters
             await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
             await staxLPToken.addMinter(liquidityOps.address);
 
             // Get some LP into the liquidity ops.
             await v2pair.connect(alan).approve(locker.address, 300);
-            await locker.connect(alan).lock(100);
-            
+            await locker.connect(alan).lock(100);            
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(100);
 
-            // get virtual price before and after adding liquidity directly from msig
+            const balancesBefore = await curvePool.get_balances({gasLimit:50000});
+            expect(balancesBefore[0]).eq(9000);
+            expect(balancesBefore[1]).eq(9000);
+
+            // Apply the liquidity to the gauge/curve pool
             const virtualPriceBefore = await curvePool.get_virtual_price();
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
-            const virtualPriceAfter = await curvePool.get_virtual_price();
-            expect(virtualPriceAfter).to.eq(virtualPriceBefore);
-            //const tolerancePct = BigNumber.from("10000000000")
-            //    .sub(await liquidityOps.curveLiquiditySlippage())
-            //    .sub(await curvePool.fee());
-            //console.log("token amount ", await curvePool.calc_token_amount([20,20], true));
-            //const minCurveTokenAmount = (await curvePool.functions['calc_token_amount(uint256[],bool)']([20,20], true))
-            //    .mul(tolerancePct)
-            //    .div(BigNumber.from("10000000000"));
+            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp);
+            await v2pair.approve(liquidityOps.address, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
                 .to.emit(liquidityOps, "LiquidityAdded")
-                .withArgs(0.2*100, 0.2*100, 40);
-            
+                .withArgs(0.2*100, expectedXlp, 39);
+
+            const virtualPriceAfter = await curvePool.get_virtual_price();
+            expect(virtualPriceAfter).to.eq(virtualPriceBefore);
+            const balancesAfter = await curvePool.get_balances({gasLimit:50000});
+            expect(balancesAfter[0]).eq(9019);
+            expect(balancesAfter[1]).eq(9020);
+
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(0.8*100);
 
@@ -313,15 +315,14 @@ describe("Liquidity Ops", async () => {
             // case next lock
             await locker.connect(alan).lock(50);
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(50);
-            
+            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.1*150);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
+            await v2pair.approve(liquidityOps.address, 0.1*150);
             await liquidityOps.applyLiquidity();
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
 
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(0.8*(100+50));
             expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(lockedStake.ending_timestamp - lockedStake.start_timestamp);
-
-            // await expect(locker.connect(alan).lock(50)).to.emit(locker, "Locked").withArgs(await alan.getAddress(), 40, 10);
-            // expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
@@ -337,23 +338,29 @@ describe("Liquidity Ops", async () => {
 
         it("multiple users locking", async() => {
             await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
             await staxLPToken.addMinter(liquidityOps.address);
+            const staxLPSupplyBefore = (await staxLPToken.totalSupply()).toNumber();
 
             // Alan locks 100 LP
             await v2pair.connect(alan).approve(locker.address, 150);
             expect(await locker.connect(alan).lock(100));
 
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
+            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp);
+            await v2pair.approve(liquidityOps.address, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
                 .to.emit(liquidityOps, "LiquidityAdded")
-                .withArgs(0.2*100, 0.2*100, 40);
+                .withArgs(0.2*100, expectedXlp, (0.2*100)+expectedXlp.toNumber());
+
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+expectedXlp.toNumber());
 
             // Policy change
             await liquidityOps.setLockParams(90, 100);
+            const staxLPSupplyBefore2 = (await staxLPToken.totalSupply()).toNumber();
 
             // Alan locks another 50 LP
             expect(await locker.connect(alan).lock(50));
@@ -369,21 +376,28 @@ describe("Liquidity Ops", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
             expect(await staxLPToken.balanceOf(await frank.getAddress())).to.eq(100);
             expect(await staxLPToken.balanceOf(locker.address)).to.eq(0);
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+expectedXlp.toNumber()+150);
+
             expect(await v2pair.balanceOf(liquidityOps.address)).to.eq(150);
-            //expect(await v2pair.balanceOf(locker.address)).to.eq(100*0.2 + 50*0.1 + 100*0.1);
 
             const lockedLiquidityBefore = await lpFarm.lockedLiquidityOf(liquidityOps.address);
             const virtualPriceBefore = await curvePool.get_virtual_price();
+            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.1*150);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
+            await v2pair.approve(liquidityOps.address, 0.1*150);
             await liquidityOps.applyLiquidity();
             const virtualPriceAfter = await curvePool.get_virtual_price();
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(lockedLiquidityBefore.add(0.9*(150)));
             // normalized price
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
+
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore2+150+expectedXlp2.toNumber());
         });
 
         it("removes liquidity", async () => {
             // Need to add both the locker and liquidity ops as xlp minters
             await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
             await staxLPToken.addMinter(liquidityOps.address);
             await liquidityOps.setOperator(await frank.getAddress());
@@ -392,8 +406,9 @@ describe("Liquidity Ops", async () => {
             await v2pair.connect(alan).approve(locker.address, 300);
             await locker.connect(alan).lock(100);
 
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
+            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp);
+            await v2pair.approve(liquidityOps.address, 0.2*100);
             await liquidityOps.applyLiquidity();
 
             const liquidityBefore = await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000});
@@ -406,13 +421,14 @@ describe("Liquidity Ops", async () => {
             const amount1 = balanceCoin1.mul(10).div(totalSupply);
             await expect(liquidityOps.connect(frank).removeLiquidity(10, 0, 0, {gasLimit: 200000}))
                 .to.emit(liquidityOps, "LiquidityRemoved")
-                .withArgs(amount0, amount1, 10);
+                .withArgs(amount1, amount0, 10);
             expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.eq(liquidityBefore.sub(10));
         });
 
         it("should withdraw and relock", async() => {
             // lock
             await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
             await v2pair.connect(alan).approve(locker.address, 300);
             await staxLPToken.addMinter(liquidityOps.address);
             await staxLPToken.addMinter(locker.address);
@@ -420,10 +436,9 @@ describe("Liquidity Ops", async () => {
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
-
-            //await locker.connect(alan).lock(50);
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([720, 900], 0, await templeMultisig.getAddress());
+            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp);
+            await v2pair.approve(liquidityOps.address, 0.2*100);
             await liquidityOps.applyLiquidity();
 
             // fast forward to end of locktime
@@ -450,6 +465,9 @@ describe("Liquidity Ops", async () => {
 
             // lock, fast forward and relock again to ensure only one active lock
             await locker.connect(alan).lock(50);
+            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.2*50);
+            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
+            await v2pair.approve(liquidityOps.address, 0.2*50);
             await liquidityOps.applyLiquidity();
             await mineForwardSeconds(8 * 86400);
             await liquidityOps.withdrawAndRelock(newLockedStakes[1].kek_id);
