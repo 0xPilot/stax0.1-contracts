@@ -171,28 +171,19 @@ contract LiquidityOps is Ownable {
         emit Locked(liquidity);
     }
 
-    function addLiquidity(uint256 lpAmount) private {
-        // Get the amount of xLP needed to add into the liquidity pool
+    function addLiquidity(uint256 _amount) private {
+        // Add same amounts of lp and xlp tokens
         // such that the price remains about the same - don't apply any peg fixing here.
         
-        uint256 xlpAmount;
-        uint256[2] memory amounts;
-        if (curveStableSwap0IsXlpToken) {
-            // from=lpToken, to=xlptoken
-            xlpAmount = curveStableSwap.get_dy(1, 0, lpAmount);
-            amounts = [xlpAmount, lpAmount];
-        } else {
-            xlpAmount = curveStableSwap.get_dy(0, 1, lpAmount);
-            amounts = [lpAmount, xlpAmount];
-        }
-
-        // Mint the new xLP
-        xlpToken.mint(address(this), xlpAmount);
+        uint256[2] memory amounts = [_amount, _amount];
         
-        lpToken.safeIncreaseAllowance(address(curveStableSwap), lpAmount);
+        // Mint the new xLP. same as lp amount
+        xlpToken.mint(address(this), _amount);
+
+        lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
 
         // TODO: A better way to get access to safeIncreaseAllowance?
-        IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), xlpAmount);
+        IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), _amount);
 
         // The min token amount we're willing to accept
         // Takes into consideration a acceptable slippage + the curve pool fee
@@ -200,7 +191,7 @@ contract LiquidityOps is Ownable {
         uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / 10**10;
         uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount, address(this));
 
-        emit LiquidityAdded(lpAmount, xlpAmount, liquidity);
+        emit LiquidityAdded(_amount, _amount, liquidity);
     }
 
     function removeLiquidity(
