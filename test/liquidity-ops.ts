@@ -290,17 +290,16 @@ describe("Liquidity Ops", async () => {
 
             // Apply the liquidity to the gauge/curve pool
             const virtualPriceBefore = await curvePool.get_virtual_price();
-            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
                 .to.emit(liquidityOps, "LiquidityAdded")
-                .withArgs(0.2*100, expectedXlp, 39);
+                .withArgs(0.2*100, 0.2*100, 40);
 
             const virtualPriceAfter = await curvePool.get_virtual_price();
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
             const balancesAfter = await curvePool.get_balances({gasLimit:50000});
-            expect(balancesAfter[0]).eq(9019);
+            expect(balancesAfter[0]).eq(9020);
             expect(balancesAfter[1]).eq(9020);
 
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
@@ -342,14 +341,13 @@ describe("Liquidity Ops", async () => {
             await v2pair.connect(alan).approve(locker.address, 150);
             expect(await locker.connect(alan).lock(100));
 
-            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
                 .to.emit(liquidityOps, "LiquidityAdded")
-                .withArgs(0.2*100, expectedXlp, (0.2*100)+expectedXlp.toNumber());
+                .withArgs(0.2*100, 0.2*100, (0.2*100)+20);
 
-            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+expectedXlp.toNumber());
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+20);
 
             // Policy change
             await liquidityOps.setLockParams(90, 100);
@@ -369,20 +367,19 @@ describe("Liquidity Ops", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
             expect(await staxLPToken.balanceOf(await frank.getAddress())).to.eq(100);
             expect(await staxLPToken.balanceOf(locker.address)).to.eq(0);
-            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+expectedXlp.toNumber()+150);
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore+100+20+150);
 
             expect(await v2pair.balanceOf(liquidityOps.address)).to.eq(150);
 
             const lockedLiquidityBefore = await lpFarm.lockedLiquidityOf(liquidityOps.address);
             const virtualPriceBefore = await curvePool.get_virtual_price();
-            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.1*150);
             await liquidityOps.applyLiquidity();
             const virtualPriceAfter = await curvePool.get_virtual_price();
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(lockedLiquidityBefore.add(0.9*(150)));
             // normalized price
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
 
-            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore2+150+expectedXlp2.toNumber());
+            expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore2+150+15);
         });
 
         it("removes liquidity", async () => {
