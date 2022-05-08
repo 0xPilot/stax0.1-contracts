@@ -168,7 +168,7 @@ describe("Liquidity Ops", async () => {
                 value: ethers.utils.parseEther("0.2"),
               });
 
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)']; // this causing error in before each hook
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
 
             // to counter "transaction run out of gas errors"
@@ -291,8 +291,6 @@ describe("Liquidity Ops", async () => {
             // Apply the liquidity to the gauge/curve pool
             const virtualPriceBefore = await curvePool.get_virtual_price();
             const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp);
-            await v2pair.approve(liquidityOps.address, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
@@ -315,9 +313,6 @@ describe("Liquidity Ops", async () => {
             // case next lock
             await locker.connect(alan).lock(50);
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(50);
-            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.1*150);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
-            await v2pair.approve(liquidityOps.address, 0.1*150);
             await liquidityOps.applyLiquidity();
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
 
@@ -348,8 +343,6 @@ describe("Liquidity Ops", async () => {
             expect(await locker.connect(alan).lock(100));
 
             const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp);
-            await v2pair.approve(liquidityOps.address, 0.2*100);
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
@@ -383,8 +376,6 @@ describe("Liquidity Ops", async () => {
             const lockedLiquidityBefore = await lpFarm.lockedLiquidityOf(liquidityOps.address);
             const virtualPriceBefore = await curvePool.get_virtual_price();
             const expectedXlp2 = await curvePool.get_dy(0, 1, 0.1*150);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
-            await v2pair.approve(liquidityOps.address, 0.1*150);
             await liquidityOps.applyLiquidity();
             const virtualPriceAfter = await curvePool.get_virtual_price();
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(lockedLiquidityBefore.add(0.9*(150)));
@@ -406,9 +397,6 @@ describe("Liquidity Ops", async () => {
             await v2pair.connect(alan).approve(locker.address, 300);
             await locker.connect(alan).lock(100);
 
-            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp);
-            await v2pair.approve(liquidityOps.address, 0.2*100);
             await liquidityOps.applyLiquidity();
 
             const liquidityBefore = await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000});
@@ -436,9 +424,7 @@ describe("Liquidity Ops", async () => {
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
-            const expectedXlp = await curvePool.get_dy(0, 1, 0.2*100);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp);
-            await v2pair.approve(liquidityOps.address, 0.2*100);
+
             await liquidityOps.applyLiquidity();
 
             // fast forward to end of locktime
@@ -465,9 +451,6 @@ describe("Liquidity Ops", async () => {
 
             // lock, fast forward and relock again to ensure only one active lock
             await locker.connect(alan).lock(50);
-            const expectedXlp2 = await curvePool.get_dy(0, 1, 0.2*50);
-            await staxLPToken.approve(liquidityOps.address, expectedXlp2);
-            await v2pair.approve(liquidityOps.address, 0.2*50);
             await liquidityOps.applyLiquidity();
             await mineForwardSeconds(8 * 86400);
             await liquidityOps.withdrawAndRelock(newLockedStakes[1].kek_id);
