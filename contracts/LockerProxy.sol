@@ -4,9 +4,14 @@ pragma solidity ^0.8.4;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "hardhat/console.sol";
 
 interface IXLPToken {
     function mint(address to, uint256 amount) external;
+}
+
+interface IStaxLPStaking {
+    function stakeFor(address _for, uint256 _amount) external;
 }
 
 contract LockerProxy is Ownable {
@@ -16,6 +21,8 @@ contract LockerProxy is Ownable {
     address public liquidityOps;
     IERC20 public lpToken; // lp token
     IXLPToken public xlpToken; // xLP token
+    IStaxLPStaking public xlpStaking; // xLP staking contract
+
 
     event Locked(address user, uint256 amountLocked);
     event LiquidityOpsSet(address liquidityOps);
@@ -24,11 +31,13 @@ contract LockerProxy is Ownable {
     constructor(
         address _liquidityOps,
         address _lpToken,
-        address _xlpToken
+        address _xlpToken,
+        address _xlpStaking
     ) {
         liquidityOps = _liquidityOps;
         lpToken = IERC20(_lpToken);
         xlpToken = IXLPToken(_xlpToken);
+        xlpStaking = IStaxLPStaking(_xlpStaking);
     }
 
     function setLiquidityOps(address _liquidityOps) external onlyOwner {
@@ -47,6 +56,16 @@ contract LockerProxy is Ownable {
         xlpToken.mint(msg.sender, _liquidity);
 
         emit Locked(msg.sender, _liquidity);
+    }
+
+    function lockAndStake(uint256 _liquidity) external {
+        // pull tokens and update allowance
+        lpToken.safeTransferFrom(msg.sender, liquidityOps, _liquidity);
+
+        // mint xlp token
+        xlpToken.mint(address(this), _liquidity);
+        IERC20(address(xlpToken)).safeIncreaseAllowance(address(xlpStaking), _liquidity);
+        xlpStaking.stakeFor(msg.sender, _liquidity);
     }
 
     // recover tokens

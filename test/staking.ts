@@ -1,12 +1,11 @@
 import { ethers, network } from "hardhat";
 import { Contract, Signer, BigNumber } from "ethers";
 import { expect } from "chai";
-import { mineForwardSeconds, mineNBlocks, shouldThrow } from "./helpers";
+import { mineForwardSeconds, shouldThrow, blockTimestamp } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
     LockerProxy, LockerProxy__factory, 
     TempleUniswapV2Pair__factory,
-    FraxUnifiedFarmERC20, FraxUnifiedFarmERC20__factory, 
     RewardsManager, RewardsManager__factory, 
     StaxLPStaking, StaxLPStaking__factory, 
     FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
@@ -21,7 +20,7 @@ import { curveFactoryAddress, fraxMultisigAddress,
     templeMultisigAddress, templeTokenAddress 
 } from "./addresses";
 
-describe("LP Locker", async () => {
+describe("Staking", async () => {
     let owner: Signer;
     let alan: Signer;
     let ben: Signer;
@@ -63,14 +62,13 @@ describe("LP Locker", async () => {
         // for off-chain view functions
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address);
+        const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
         // Create the curve stable swap
         {
             curveFactory = CurveFactory__factory.connect(curveFactoryAddress, owner);
-            
             const numPoolsBefore = await curveFactory.pool_count({gasLimit: 300000});
 
-            const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
             // weird type bug in this test
             const coins: [string,string,string,string] = [
                 staxLPToken.address, v2pair.address,
@@ -103,7 +101,7 @@ describe("LP Locker", async () => {
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
             curvePool.address, rewardsManager.address);
 
-        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address);
+        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address, staking.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
 
@@ -121,8 +119,6 @@ describe("LP Locker", async () => {
         });
         lpBigHolder = await ethers.getSigner(lpBigHolderAddress);
 
-        const lpBal = await v2pair.balanceOf(lpBigHolderAddress);
-        console.log("lp bal", lpBal);
         await v2pair.connect(lpBigHolder).transfer(await templeMultisig.getAddress(), 10000);
         await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 110000000);
 
@@ -141,7 +137,11 @@ describe("LP Locker", async () => {
             BigNumber.from(86400 * 1) // min lock time
         ]);
 
-        //await liquidityOps.setLPManager(await alan.getAddress(), true);
+        // Set the gauge temple rewards to a higher rate (same as fxs as of now)
+        await lpFarm.connect(fraxMultisig).setRewardVars(
+            templeToken.address, await lpFarm.rewardRates(0), 
+            ZERO_ADDRESS, ZERO_ADDRESS);
+            
         await liquidityOps.setRewardTokens();
         await staking.setRewardDistributor(rewardsManager.address);
         await staking.addReward(fxsToken.address);
@@ -161,13 +161,15 @@ describe("LP Locker", async () => {
                 to: await templeMultisig.getAddress(),
                 value: ethers.utils.parseEther("0.2"),
               });
-            console.log("msig v2pair and xlp ", await v2pair.balanceOf(await templeMultisig.getAddress()),
-                await staxLPToken.balanceOf(await templeMultisig.getAddress()));
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
         }
 
         await liquidityOps.setCurvePool0();
+
+        // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
+        fxsToken.connect(fraxMultisig).transfer(lpFarm.address, BigNumber.from("10").pow(23)); //await fxsToken.balanceOf(await fraxMultisig.getAddress()));
+        templeToken.connect(templeMultisig).transfer(lpFarm.address, BigNumber.from("10").pow(23)); //await templeToken.balanceOf(await templeMultisig.getAddress()));
     });
 
     it("admin tests", async () => {
@@ -186,7 +188,7 @@ describe("LP Locker", async () => {
         await liquidityOps.setCurvePool0();
         await staxLPToken.addMinter(locker.address);
         await staxLPToken.addMinter(liquidityOps.address);
-        await v2pair.connect(alan).approve(locker.address, 110000000); //110000000
+        await v2pair.connect(alan).approve(locker.address, 10000);
 
         await locker.connect(alan).lock(10000);
         expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(10000);
@@ -201,8 +203,9 @@ describe("LP Locker", async () => {
         await staking.connect(alan).stake(2000);
         await expect(staking.connect(alan).stakeAll()).to.emit(staking, "Staked").withArgs(await alan.getAddress(), xlpBalAlan.sub(3000));
         expect(await staking.balanceOf(await ben.getAddress())).to.eq(1000);
-        expect(await staking.balanceOf(await alan.getAddress())).to.eq(xlpBalAlan.sub(1000));
-
+        const alanXlpStaked = await staking.balanceOf(await alan.getAddress());
+        expect(alanXlpStaked).to.eq(xlpBalAlan.sub(1000));
+        
         // fast forward
         await mineForwardSeconds(2 * 86400);
 
@@ -212,63 +215,96 @@ describe("LP Locker", async () => {
         await liquidityOps.getReward();
         const lockerFXSBalAfter = await fxsToken.balanceOf(liquidityOps.address);
         const lockerTempleBalAfter = await templeToken.balanceOf(liquidityOps.address);
-        console.log(lockerFXSBalBefore, lockerFXSBalAfter);
-        console.log(lockerTempleBalBefore, lockerTempleBalAfter);
         expect(lockerFXSBalAfter).to.gt(lockerFXSBalBefore);
-        // lpfarm temple emissions significantly less and may round down to 0
-        // expect(lockerTempleBalAfter).to.gte(lockerTempleBalBefore);
+        expect(lockerTempleBalAfter).to.gt(lockerTempleBalBefore);
 
         // fast forward again and getRewards
         await mineForwardSeconds(2 * 86400);
         await liquidityOps.getReward();
         const lockerFXSBalAfter2 = await fxsToken.balanceOf(liquidityOps.address);
+        const lockerTempleBalAfter2 = await fxsToken.balanceOf(liquidityOps.address);
+
         expect(lockerFXSBalAfter2).to.gt(lockerFXSBalAfter);
+        expect(lockerTempleBalAfter2).to.gt(lockerTempleBalAfter);
 
         // harvest rewards to rewards manager
         await liquidityOps.harvestRewards();
 
-        // distribute rewards to stakers
         // also send more fxs and temple to rewards manager before distribution
         // so that rewards sent are more than 86400 * 7 (as division for rewardRate is 0 for smaller values)
-        await fxsToken.connect(fraxMultisig).transfer(rewardsManager.address, 86400 * 21);
-        await templeToken.connect(templeMultisig).transfer(rewardsManager.address, 86400 * 10);
+        await fxsToken.connect(fraxMultisig).transfer(rewardsManager.address, 86400 * 21 * 1e6);
+        await templeToken.connect(templeMultisig).transfer(rewardsManager.address, 86400 * 10 * 1e6);
         const rewardsManagerFXSBal = await fxsToken.balanceOf(rewardsManager.address);
         const rewardsManagerTempleBal = await templeToken.balanceOf(rewardsManager.address);
-        console.log("rewards manager ", rewardsManagerFXSBal, rewardsManagerTempleBal);
+
+        // distribute rewards to stakers, and keep track of the timestamp for checking rewards payments
         await rewardsManager.distribute(fxsToken.address);
+        const fxsRewardStartTime = await blockTimestamp();
+        
         await rewardsManager.distribute(templeToken.address);
+        const templeRewardStartTime = await blockTimestamp();
+
         expect(await fxsToken.balanceOf(staking.address)).to.eq(rewardsManagerFXSBal);
         expect(await templeToken.balanceOf(staking.address)).to.eq(rewardsManagerTempleBal);
 
-        // fast forward
+        expect(await fxsToken.balanceOf(rewardsManager.address)).to.eq(0);
+        expect(await templeToken.balanceOf(rewardsManager.address)).to.eq(0);
+        
+        // fast forward 2 days
         await mineForwardSeconds(2 * 86400);
-        console.log("reward per token ", await staking.rewardPerToken(fxsToken.address));
-        console.log("reward data , reward per token stored ", await staking.rewardData(fxsToken.address));
 
-        // claim rewards
-        console.log("alan earned fxs ", await staking.earned(await alan.getAddress(), fxsToken.address));
-        console.log("reward tokens ", (await staking.rewardTokens(0)))
-        console.log("reward tokens ", (await staking.rewardTokens(1)))
+        expect(await staking.rewardPerToken(fxsToken.address)).gt(0);
+        expect(await staking.rewardPerToken(templeToken.address)).gt(0);
+
+        const fxsRewardData = await staking.rewardData(fxsToken.address);
+        const templeRewardData = await staking.rewardData(templeToken.address);
+        expect(fxsRewardData.rewardRate).gt(0);
+        expect(templeRewardData.rewardRate).gt(0);
+
         const alanFXSBalBefore = await fxsToken.balanceOf(await alan.getAddress());
         const alanTempleBalBefore = await templeToken.balanceOf(await alan.getAddress());
+        expect(alanFXSBalBefore).eq(0);
+        expect(alanTempleBalBefore).eq(0);
 
         const alanFXSEarned = await staking.earned(await alan.getAddress(), fxsToken.address);
         const alanTempleEarned = await staking.earned(await alan.getAddress(), templeToken.address);
+
+        // Alan claims the rewards
         await staking.connect(alan).getRewards(await alan.getAddress());
 
         const alanFXSBalAfter = await fxsToken.balanceOf(await alan.getAddress());
         const alanTempleBalAfter = await templeToken.balanceOf(await alan.getAddress());
-        console.log("alan rewards before ", alanFXSBalBefore, alanTempleBalBefore);
-        console.log("alan rewards after ", alanFXSBalAfter, alanTempleBalAfter);
-        expect(alanFXSBalAfter).to.gte(alanFXSEarned.add(alanFXSBalBefore)); // gte because account earns every block/tx mine
-        expect(alanTempleBalAfter).to.gte(alanTempleEarned.add(alanTempleBalBefore));
+        
+        const currentTimestamp = await blockTimestamp();
+        const elapsedFxsRewardDuration = currentTimestamp - fxsRewardStartTime;
+
+        // Note - the order of operations matters because of trunction with the divisions.
+        const expectedFxsRewardPerToken = rewardsManagerFXSBal
+            .div(await staking.DURATION())
+            .mul(elapsedFxsRewardDuration)
+            .div(await staking.totalSupply());
+        expect(await staking.rewardPerToken(fxsToken.address)).eq(expectedFxsRewardPerToken);
+        
+        const elapsedTempleRewardDuration = currentTimestamp - templeRewardStartTime;
+        const expectedTempleRewardPerToken = rewardsManagerTempleBal
+            .div(await staking.DURATION())
+            .mul(elapsedTempleRewardDuration)
+            .div(await staking.totalSupply());
+        expect(await staking.rewardPerToken(templeToken.address)).eq(expectedTempleRewardPerToken);
+
+        // Check the rewards alan was paid matches expectations
+        expect(expectedFxsRewardPerToken.mul(alanXlpStaked)).eq(alanFXSBalAfter);
+        expect(expectedTempleRewardPerToken.mul(alanXlpStaked)).eq(alanTempleBalAfter);
+        
+        expect(alanFXSBalAfter).to.gt(alanFXSEarned.add(alanFXSBalBefore));
+        expect(alanTempleBalAfter).to.gt(alanTempleEarned.add(alanTempleBalBefore));
+
         // after some time, account should have earned rewards but significantly lesser than previously earned
         expect(await staking.earned(await alan.getAddress(), fxsToken.address)).to.lt(alanFXSEarned);
         expect(await staking.earned(await alan.getAddress(), templeToken.address)).to.lt(alanTempleEarned);
-        
+      
         // withdraw xlp
         const alanXlpBalBefore = await staxLPToken.balanceOf(await alan.getAddress());
-        const alanXlpStaked = await staking.balanceOf(await alan.getAddress());
         await staking.connect(alan).withdraw(100, true);
         expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(alanXlpBalBefore.add(100));
         await staking.connect(alan).withdrawAll(true);

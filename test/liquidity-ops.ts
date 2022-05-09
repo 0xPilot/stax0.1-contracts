@@ -62,8 +62,9 @@ describe("Liquidity Ops", async () => {
         v2pair = TempleUniswapV2Pair__factory.connect(lpTokenAddress, owner);
         staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
-        staking = await new StaxLPStaking__factory(owner).deploy(v2pair.address, await alan.getAddress());
+        staking = await new StaxLPStaking__factory(owner).deploy(staxLPToken.address, await alan.getAddress());
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address);
+        const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
         // Create the curve stable swap
         {
@@ -71,7 +72,6 @@ describe("Liquidity Ops", async () => {
             
             const numPoolsBefore = await curveFactory.pool_count();
 
-            const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
             const coins = [
                 staxLPToken.address, v2pair.address,
                 ZERO_ADDRESS, ZERO_ADDRESS];
@@ -102,7 +102,7 @@ describe("Liquidity Ops", async () => {
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
             curvePool.address, rewardsManager.address);
 
-        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address);
+        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address, staking.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
 
@@ -123,7 +123,7 @@ describe("Liquidity Ops", async () => {
             });
             lpBigHolder = await ethers.getSigner(lpBigHolderAddress);
 
-            await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 300);
+            await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 10000);
             await v2pair.connect(lpBigHolder).transfer(await templeMultisig.getAddress(), 10000);
         }
 
@@ -146,6 +146,11 @@ describe("Liquidity Ops", async () => {
             // add to valid migrators and proxies
             await lpFarm.connect(fraxMultisig).toggleMigrator(await owner.getAddress());
             await lpFarm.connect(fraxMultisig).toggleValidVeFXSProxy(await validProxy.getAddress());
+
+            // Set the gauge temple rewards to a higher rate (same as fxs as of now)
+            await lpFarm.connect(fraxMultisig).setRewardVars(
+                templeToken.address, await lpFarm.rewardRates(0), 
+                ZERO_ADDRESS, ZERO_ADDRESS);
 
             await network.provider.request({
                 method: "hardhat_stopImpersonatingAccount",
@@ -177,6 +182,10 @@ describe("Liquidity Ops", async () => {
             //console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress(), {gasLimit: 50000}));
             //console.log("Curve Pool Total Supply:", await curvePool.totalSupply({gasLimit: 50000}));
         }
+
+        // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
+        fxsToken.connect(fraxMultisig).transfer(lpFarm.address, await fxsToken.balanceOf(await fraxMultisig.getAddress()));
+        templeToken.connect(templeMultisig).transfer(lpFarm.address, await templeToken.balanceOf(await templeMultisig.getAddress()));
     });
 
     describe("Liquidity", async () => {
@@ -468,17 +477,16 @@ describe("Liquidity Ops", async () => {
     describe("Rewards", async () => {
         beforeEach(async () => {
             await liquidityOps.setLockParams(100, 100);
+            await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
-
-            await v2pair.connect(alan).approve(locker.address, 300);
-            await locker.connect(alan).lock(300);
+            await staxLPToken.addMinter(liquidityOps.address);
 
             await liquidityOps.setRewardTokens();
             await liquidityOps.setRewardsManager(rewardsManager.address);
        
-            // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
-            fxsToken.connect(fraxMultisig).transfer(lpFarm.address, await fxsToken.balanceOf(await fraxMultisig.getAddress()));
-            templeToken.connect(templeMultisig).transfer(lpFarm.address, await templeToken.balanceOf(await templeMultisig.getAddress()));
+            await v2pair.connect(alan).approve(locker.address, 10000);
+            await locker.connect(alan).lock(10000);
+            await liquidityOps.applyLiquidity();
         });
 
         it("reward tokens are set", async () => {
@@ -487,24 +495,45 @@ describe("Liquidity Ops", async () => {
         });
 
         it("gets rewards", async () => {
+            const templeBalanceBefore = await templeToken.balanceOf(liquidityOps.address);
+            const fxsBalanceBefore = await fxsToken.balanceOf(liquidityOps.address);
+
             // fast forward
-            await mineForwardSeconds(10 * 86400);
+            await mineForwardSeconds(2 * 86400);
             await expect(liquidityOps.getReward())
                 .to.emit(liquidityOps, "RewardClaimed");
+
+            const fxsBalanceAfter = await fxsToken.balanceOf(liquidityOps.address);
+            const templeBalanceAfter = await templeToken.balanceOf(liquidityOps.address);
+
+            expect(fxsBalanceAfter).to.gt(fxsBalanceBefore);
+            expect(templeBalanceAfter).to.gt(templeBalanceBefore);            
         });
 
         it("harvests rewards", async () => {
-            // fast forward and get reward
-            await mineForwardSeconds(10 * 86400);
-            await liquidityOps.getReward();
             const templeBalanceBefore = await templeToken.balanceOf(liquidityOps.address);
             const fxsBalanceBefore = await fxsToken.balanceOf(liquidityOps.address);
+
+            // fast forward and get reward
+            await mineForwardSeconds(2 * 86400);
+
+            await liquidityOps.getReward();
+
+            const fxsBalanceAfter = await fxsToken.balanceOf(liquidityOps.address);
+            const templeBalanceAfter = await templeToken.balanceOf(liquidityOps.address);
+
+            // liquidity ops has the rewards
+            expect(fxsBalanceAfter).gt(fxsBalanceBefore);
+            expect(templeBalanceAfter).gt(templeBalanceBefore);
 
             await expect(liquidityOps.harvestRewards())
                 .to.emit(liquidityOps, "RewardHarvested");
 
-            expect(await templeToken.balanceOf(rewardsManager.address)).to.eq(templeBalanceBefore);
-            expect(await fxsToken.balanceOf(rewardsManager.address)).to.eq(fxsBalanceBefore);
+            // Now rewards manager has the rewards.
+            expect(await templeToken.balanceOf(liquidityOps.address)).eq(0);
+            expect(await fxsToken.balanceOf(liquidityOps.address)).eq(0);
+            expect(await templeToken.balanceOf(rewardsManager.address)).eq(templeBalanceAfter);
+            expect(await fxsToken.balanceOf(rewardsManager.address)).eq(fxsBalanceAfter);
         });
     });
 });

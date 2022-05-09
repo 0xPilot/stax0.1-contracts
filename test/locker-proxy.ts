@@ -5,7 +5,8 @@ import { shouldThrow } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
     LockerProxy, LockerProxy__factory,
-    TempleUniswapV2Pair, TempleUniswapV2Pair__factory
+    TempleUniswapV2Pair, TempleUniswapV2Pair__factory,
+    StaxLPStaking, StaxLPStaking__factory
 } from "../typechain";
 
 import { 
@@ -20,6 +21,7 @@ describe("Locker Proxy", async () => {
     let lpBigHolder: Signer;
     let v2pair: TempleUniswapV2Pair;
     let locker: LockerProxy;
+    let staking: StaxLPStaking;
 
     before( async () => {
         await network.provider.request({
@@ -39,8 +41,9 @@ describe("Locker Proxy", async () => {
         [owner, alan, ben, liquidityOps] = await ethers.getSigners();
         // lp token
         v2pair = TempleUniswapV2Pair__factory.connect(lpTokenAddress, owner);
-        staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");        
-        locker = await new LockerProxy__factory(owner).deploy(await liquidityOps.getAddress(), v2pair.address, staxLPToken.address);
+        staxLPToken = await new StaxLP__factory(owner).deploy("Stax LP Token", "xLP");
+        staking = await new StaxLPStaking__factory(owner).deploy(staxLPToken.address, await alan.getAddress());
+        locker = await new LockerProxy__factory(owner).deploy(await liquidityOps.getAddress(), v2pair.address, staxLPToken.address, staking.address);
 
         // impersonate account and transfer lp tokens
         await network.provider.request({
@@ -106,6 +109,32 @@ describe("Locker Proxy", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(150);
             expect(await staxLPToken.balanceOf(await ben.getAddress())).eq(100);
             expect(await staxLPToken.totalSupply()).eq(250);
+        });
+
+        it("should lock and stake", async() => {
+            await staxLPToken.addMinter(locker.address);
+
+            // Alan locks and stakes 100 -- only 1 approval required.
+            await v2pair.connect(alan).approve(locker.address, 100);
+
+            const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
+            const liquidityOpsLpBefore = await v2pair.balanceOf(await liquidityOps.getAddress());
+
+            await expect(locker.connect(alan).lockAndStake(100))
+                .to.emit(locker, "Locked")
+                .withArgs(await alan.getAddress(), 100)
+                .to.emit(staking, "Staked")
+                .withArgs(await alan.getAddress(), 100);
+            
+            // lp transferred to the liquidity manager
+            expect(await v2pair.balanceOf(await alan.getAddress())).eq(alanLpBefore.sub(100));
+            expect(await v2pair.balanceOf(await liquidityOps.getAddress())).eq(liquidityOpsLpBefore.toNumber()+100);
+
+            // Alan's xlp has been staked.
+            expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(0);
+            expect(await staxLPToken.balanceOf(await liquidityOps.getAddress())).eq(0);
+            expect(await staking.balanceOf(await alan.getAddress())).eq(100);
+            expect(await staking.totalSupply()).eq(100);
         });
 
         it("owner can recover tokens", async () => {

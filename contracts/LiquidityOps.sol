@@ -79,6 +79,9 @@ contract LiquidityOps is Ownable {
     // 1e10 precision (same as curve fees) - so 1% = 1e8, 100% = 1e10
     uint256 public curveLiquiditySlippage;
 
+    // FEE_DENOMINATOR from Curve StableSwap
+    uint256 internal constant CURVE_FEE_DENOMINATOR = 1e10;
+
     event SetLockParams(uint128 numerator, uint128 denominator);
     event Locked(uint256 amountLocked);
     event LiquidityAdded(uint256 lpAmount, uint256 xlpAmount, uint256 curveTokenAmount);
@@ -125,7 +128,7 @@ contract LiquidityOps is Ownable {
     }
 
     function setOtherParams(uint256 _curveLiquiditySlippage) external onlyOwner {
-        require(_curveLiquiditySlippage > 0 && _curveLiquiditySlippage <= 10**10, "invalid percentage");
+        require(_curveLiquiditySlippage > 0 && _curveLiquiditySlippage <= CURVE_FEE_DENOMINATOR, "invalid percentage");
         curveLiquiditySlippage = _curveLiquiditySlippage;
     }
 
@@ -181,14 +184,12 @@ contract LiquidityOps is Ownable {
         xlpToken.mint(address(this), _amount);
 
         lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-
-        // TODO: A better way to get access to safeIncreaseAllowance?
         IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), _amount);
 
         // The min token amount we're willing to accept
         // Takes into consideration a acceptable slippage + the curve pool fee
-        uint256 tolerancePct = 10**10 - curveLiquiditySlippage - curveStableSwap.fee();
-        uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / 10**10;
+        uint256 tolerancePct = CURVE_FEE_DENOMINATOR - curveLiquiditySlippage - curveStableSwap.fee();
+        uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / CURVE_FEE_DENOMINATOR;
         uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount, address(this));
 
         emit LiquidityAdded(_amount, _amount, liquidity);
@@ -222,8 +223,19 @@ contract LiquidityOps is Ownable {
         require(availableLiquidity > 0, "not enough liquidity");
         uint256 lockAmount = _getLockAmount(availableLiquidity);
 
-        lockInGauge(lockAmount);
-        addLiquidity(availableLiquidity - lockAmount);
+        // Policy may be set to put all in gauge, or all as new curve liquidity
+        if (lockAmount > 0) {
+            lockInGauge(lockAmount);
+        }
+
+        uint256 addLiquidityAmount;
+        unchecked {
+            addLiquidityAmount = availableLiquidity - lockAmount;
+        }
+
+        if (addLiquidityAmount > 0) {
+            addLiquidity(addLiquidityAmount);
+        }
     }
 
     // get amount to lock based on lock rate

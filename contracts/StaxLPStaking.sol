@@ -32,7 +32,7 @@ contract StaxLPStaking is Ownable {
 
     struct Reward {
         uint40 periodFinish;
-        uint216 rewardRate;
+        uint216 rewardRate;  // The reward amount (1e18) per total reward duration
         uint40 lastUpdateTime;
         uint216 rewardPerTokenStored;
     }
@@ -80,8 +80,7 @@ contract StaxLPStaking is Ownable {
             rewardData[_rewardsToken].rewardPerTokenStored +
             (((_lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish) -
                 rewardData[_rewardsToken].lastUpdateTime) *
-                rewardData[_rewardsToken].rewardRate *
-                1e18) / totalSupply());
+                rewardData[_rewardsToken].rewardRate) / totalSupply());
     }
 
     function rewardPerToken(address _rewardsToken) external view returns (uint256) {
@@ -102,12 +101,10 @@ contract StaxLPStaking is Ownable {
         uint256 _balance
     ) internal view returns (uint256) {
         return
-            (_balance * (_rewardPerToken(_rewardsToken) - userRewardPerTokenPaid[_account][_rewardsToken])) /
-            1e18 +
+            (_balance * (_rewardPerToken(_rewardsToken) - userRewardPerTokenPaid[_account][_rewardsToken])) +
             claimableRewards[_account][_rewardsToken];
     }
 
-    // TODO: ensure staker has originally locked? so that users don't just buy from AMM and stake for rewards?
     function stake(uint256 _amount)
         public
         updateReward(msg.sender)
@@ -134,11 +131,9 @@ contract StaxLPStaking is Ownable {
         require(_amount > 0, "RewardPool : Cannot stake 0");
         // pull tokens
         stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
-
         //give to _for
         _totalSupply += _amount;
         _balances[_for] += _amount;
-
         emit Staked(_for, _amount);
     }
 
