@@ -82,7 +82,7 @@ describe("Locker Proxy", async () => {
             await v2pair.connect(alan).approve(locker.address, 150);
             const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
             //const lockAmount = 100;
-            await expect(locker.connect(alan).lock(100))
+            await expect(locker.connect(alan).lock(100, false))
                 .to.emit(locker, "Locked")
                 .withArgs(await alan.getAddress(), 100);
 
@@ -94,12 +94,12 @@ describe("Locker Proxy", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(100);
 
             // Alan locks another 50
-            await locker.connect(alan).lock(50);
+            await locker.connect(alan).lock(50, false);
 
             // Ben locks 100
             const benLpBefore = await v2pair.balanceOf(await ben.getAddress());
             await v2pair.connect(ben).approve(locker.address, 100);
-            await locker.connect(ben).lock(100);
+            await locker.connect(ben).lock(100, false);
 
             // Check total balances
             expect(await v2pair.balanceOf(await liquidityOps.getAddress())).eq(250);
@@ -120,7 +120,7 @@ describe("Locker Proxy", async () => {
             const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
             const liquidityOpsLpBefore = await v2pair.balanceOf(await liquidityOps.getAddress());
 
-            await expect(locker.connect(alan).lockAndStake(100))
+            await expect(locker.connect(alan).lock(100, true))
                 .to.emit(locker, "Locked")
                 .withArgs(await alan.getAddress(), 100)
                 .to.emit(staking, "Staked")
