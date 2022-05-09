@@ -80,7 +80,8 @@ contract StaxLPStaking is Ownable {
             rewardData[_rewardsToken].rewardPerTokenStored +
             (((_lastTimeRewardApplicable(rewardData[_rewardsToken].periodFinish) -
                 rewardData[_rewardsToken].lastUpdateTime) *
-                rewardData[_rewardsToken].rewardRate) / totalSupply());
+                rewardData[_rewardsToken].rewardRate * 1e18)
+                / totalSupply());
     }
 
     function rewardPerToken(address _rewardsToken) external view returns (uint256) {
@@ -101,7 +102,7 @@ contract StaxLPStaking is Ownable {
         uint256 _balance
     ) internal view returns (uint256) {
         return
-            (_balance * (_rewardPerToken(_rewardsToken) - userRewardPerTokenPaid[_account][_rewardsToken])) +
+            (_balance * (_rewardPerToken(_rewardsToken) - userRewardPerTokenPaid[_account][_rewardsToken])) / 1e18 +
             claimableRewards[_account][_rewardsToken];
     }
 
