@@ -48,24 +48,20 @@ contract LockerProxy is Ownable {
 
     // lock that adds additionally to single lock position for every user lock
     // this scenario assumes there is only one lock at all times for this contract
-    function lock(uint256 _liquidity) external {
-        // pull tokens and update allowance
+    function lock(uint256 _liquidity, bool _stake) external {
+        // pull tokens
         lpToken.safeTransferFrom(msg.sender, liquidityOps, _liquidity);
 
         // mint xlp token to user
-        xlpToken.mint(msg.sender, _liquidity);
+        if (_stake) {
+            xlpToken.mint(address(this), _liquidity);
+            IERC20(address(xlpToken)).safeIncreaseAllowance(address(xlpStaking), _liquidity);
+            xlpStaking.stakeFor(msg.sender, _liquidity);
+        } else {
+            xlpToken.mint(msg.sender, _liquidity);
+        }
 
         emit Locked(msg.sender, _liquidity);
-    }
-
-    function lockAndStake(uint256 _liquidity) external {
-        // pull tokens and update allowance
-        lpToken.safeTransferFrom(msg.sender, liquidityOps, _liquidity);
-
-        // mint xlp token
-        xlpToken.mint(address(this), _liquidity);
-        IERC20(address(xlpToken)).safeIncreaseAllowance(address(xlpStaking), _liquidity);
-        xlpStaking.stakeFor(msg.sender, _liquidity);
     }
 
     // recover tokens
