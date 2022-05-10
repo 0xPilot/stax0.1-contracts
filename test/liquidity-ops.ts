@@ -176,11 +176,9 @@ describe("Liquidity Ops", async () => {
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
 
-            // to counter "transaction run out of gas errors"
+            // note: to counter "transaction run out of gas errors"
             // When using this plugin, the `gas`, `gasPrice` and `gasMultiplier` parameters from your `hardhat.config` 
             // are not automatically applied to transactions
-            //console.log("Temple Multisig Liquidity:", await curvePool.balanceOf(await templeMultisig.getAddress(), {gasLimit: 50000}));
-            //console.log("Curve Pool Total Supply:", await curvePool.totalSupply({gasLimit: 50000}));
         }
 
         // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
@@ -190,7 +188,7 @@ describe("Liquidity Ops", async () => {
 
     describe("Liquidity", async () => {
         it("admin tests", async () => {
-            await shouldThrow(liquidityOps.connect(alan).setOperator(await frank.getAddress()), /Ownable: caller is not the owner/);
+            await shouldThrow(liquidityOps.connect(alan).setPegDefender(await frank.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setOtherParams(1e8), /Ownable: caller is not the owner/);
@@ -200,11 +198,13 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
 
-            await shouldThrow(liquidityOps.connect(alan).removeLiquidity(100, 0, 0), /not operator/);
-            await shouldThrow(liquidityOps.connect(owner).removeLiquidity(100, 0, 0), /not operator/);
+            await shouldThrow(liquidityOps.connect(alan).removeLiquidity(100, 0, 0), /not defender/);
+            await shouldThrow(liquidityOps.connect(owner).removeLiquidity(100, 0, 0), /not defender/);
+            await shouldThrow(liquidityOps.connect(alan).removeLiquidityImbalance([10, 1], 100), /not defender/);
+            await shouldThrow(liquidityOps.connect(alan).exchange(0, 1, v2pair.address, 100), /not defender/);
 
             // happy paths
-            await liquidityOps.setOperator(await frank.getAddress());
+            await liquidityOps.setPegDefender(await frank.getAddress());
             await liquidityOps.setLPFarm(lpFarm.address);
             await liquidityOps.setLockParams(80, 100);
             await liquidityOps.setOtherParams(1e8);
@@ -216,11 +216,13 @@ describe("Liquidity Ops", async () => {
 
             await shouldThrow(liquidityOps.connect(frank).removeLiquidity(100, 0, 0), /not enough tokens/);
             await shouldThrow(liquidityOps.applyLiquidity(), /not enough liquidity/);
+            await shouldThrow(liquidityOps.connect(frank).exchange(0, 1, v2pair.address, 100), /not enough tokens/);
+            await shouldThrow(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], 100), /no liquidity/);
         });
 
-        it("should set operator", async () => {
-            await liquidityOps.setOperator(await frank.getAddress());
-            expect(await liquidityOps.operator()).to.eq(await frank.getAddress());
+        it("should set peg defender", async () => {
+            await liquidityOps.setPegDefender(await frank.getAddress());
+            expect(await liquidityOps.pegDefender()).to.eq(await frank.getAddress());
         });
 
         it("should set lp farm", async () => {
@@ -397,7 +399,7 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
             await staxLPToken.addMinter(liquidityOps.address);
-            await liquidityOps.setOperator(await frank.getAddress());
+            await liquidityOps.setPegDefender(await frank.getAddress());
 
             // Get some LP into the liquidity ops.
             await v2pair.connect(alan).approve(locker.address, 300);
@@ -417,6 +419,31 @@ describe("Liquidity Ops", async () => {
                 .to.emit(liquidityOps, "LiquidityRemoved")
                 .withArgs(amount1, amount0, 10);
             expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.eq(liquidityBefore.sub(10));
+        });
+
+        it("removes liquidity imbalance", async () => {
+            // Need to add both the locker and liquidity ops as xlp minters
+            await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
+            await staxLPToken.addMinter(locker.address);
+            await staxLPToken.addMinter(liquidityOps.address);
+            await liquidityOps.setPegDefender(await frank.getAddress());
+
+            // Get some LP into the liquidity ops.
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
+
+            await liquidityOps.applyLiquidity();
+
+            const liquidityBefore = await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000});
+            
+            const lpBalBefore = await v2pair.balanceOf(liquidityOps.address);
+            const xlpBalBefore = await staxLPToken.balanceOf(liquidityOps.address);
+            await expect(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], liquidityBefore, {gasLimit: 200000}))
+                .to.emit(liquidityOps, "RemovedLiquidityImbalance");
+            expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.lt(liquidityBefore);
+            expect(await v2pair.balanceOf(liquidityOps.address)).to.eq(lpBalBefore.add(BigNumber.from(1)));
+            expect(await staxLPToken.balanceOf(liquidityOps.address)).to.eq(xlpBalBefore.add(10));
         });
 
         it("should withdraw and relock", async() => {
@@ -472,6 +499,60 @@ describe("Liquidity Ops", async () => {
             expect(newLockedStakes[1].lock_multiplier).to.eq(0);
         });
 
+        it("exchanges one coin for another", async () => {
+            // add minters, set params
+            await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setCurvePool0();
+            await staxLPToken.addMinter(locker.address);
+            await staxLPToken.addMinter(liquidityOps.address);
+            await liquidityOps.setPegDefender(await frank.getAddress());
+
+            // Get some LP into the liquidity ops.
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
+
+            // lock and add liquidity
+            const virtualPriceBefore = await curvePool.get_virtual_price();
+            await liquidityOps.applyLiquidity()
+            const virtualPriceAfter = await curvePool.get_virtual_price();
+            expect(virtualPriceAfter).to.eq(virtualPriceBefore);
+
+            // distort virtual price by adding liquidity off ratio
+            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 1000);
+            await v2pair.connect(templeMultisig).approve(curvePool.address, 100);
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
+            await addLiquidityFn([1000, 1], 1, await templeMultisig.getAddress());
+
+            // note: a considerable large difference in balances of coins would lead to peg being off, and therefore user getting lesser coins
+            // proof price is off using amount one gets
+            // using a large enough number to introduce imbalance. caller of peg defender should calculate offchain (could be a keeper/bot)
+            const inputAmount = 2000;
+            const expected = await curvePool.get_dy(0, 1, inputAmount);
+            // ideal amount with 0.04% fee
+            const idealAmountAfterFee = Math.floor(inputAmount * (0.9996));
+            expect(expected).lt(idealAmountAfterFee);
+            // calculate how much of y needed to bring balances of coins close
+            // note: difference in balances doesn't always mean peg is off
+            const balance0 = await curvePool.balances(0, {gasLimit: 100000});
+            const balance1 = await curvePool.balances(1, {gasLimit: 100000});
+            const balanceDiff = balance0.sub(balance1);
+            const toExchange = balanceDiff.div(2);
+
+            // lock more to introduce some lp in liquidity ops
+            await v2pair.connect(alan).approve(locker.address, toExchange);
+            await locker.connect(alan).lock(toExchange, false);
+
+            const lpBalanceBefore = await v2pair.balanceOf(liquidityOps.address);
+            const xlpBalanceBefore = await staxLPToken.balanceOf(liquidityOps.address);
+            
+            const amountToReceive = await curvePool.get_dy(1, 0, toExchange);
+            await expect(liquidityOps.connect(frank).exchange(1, 0, v2pair.address, toExchange))
+                .to.emit(liquidityOps, "CoinExchanged")
+                .withArgs(v2pair.address, toExchange, amountToReceive);
+            const balance0After = await curvePool.balances(0, {gasLimit: 100000});
+            const balance1After = await curvePool.balances(1, {gasLimit: 100000});
+            expect(Math.abs(balance0After - balance1After)).to.lt(2);
+        });
     });
 
     describe("Rewards", async () => {

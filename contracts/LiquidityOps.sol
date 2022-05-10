@@ -41,7 +41,6 @@ interface IStableSwap {
     function remove_liquidity(uint256 _amount, uint256[2] calldata _min_amounts) external returns (uint256[2] memory);
     function fee() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
-    function get_virtual_price() external view returns (uint256);
     function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256);
     function remove_liquidity_imbalance(uint256[2] memory amounts, uint256 _max_burn_amount, address _receiver) external returns (uint256);
 }
@@ -186,6 +185,7 @@ contract LiquidityOps is Ownable {
         uint256[2] memory _amounts,
         uint256 _maxBurnAmount
     ) external onlyPegDefender {
+        require(curveStableSwap.balanceOf(address(this)) > 0, "no liquidity");
         uint256 burnAmount = curveStableSwap.remove_liquidity_imbalance(_amounts, _maxBurnAmount, address(this));
 
         emit RemovedLiquidityImbalance(_amounts[0], _amounts[1], burnAmount);
