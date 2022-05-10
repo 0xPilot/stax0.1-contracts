@@ -42,6 +42,7 @@ interface IStableSwap {
     function fee() external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
     function get_virtual_price() external view returns (uint256);
+    function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256);
 }
 
 contract LiquidityOps is Ownable {
@@ -57,7 +58,7 @@ contract LiquidityOps is Ownable {
     IStableSwap public curveStableSwap;
 
     address public rewardsManager;
-
+    address public pegDefender;
     address public operator;
     bool public curveStableSwap0IsXlpToken; // The order of curve pool tokens
 
@@ -93,6 +94,7 @@ contract LiquidityOps is Ownable {
     event RewardsManagerSet(address manager);
     event CurveStableSwap0IsXlpToken(bool curveStableSwap0IsXlpToken);
     event TokenRecovered(address user, uint256 amount);
+    event CoinExchanged(address coinSent, uint256 amountSent, uint256 amountReceived);
 
     constructor(
         address _lpFarm,
@@ -153,6 +155,32 @@ contract LiquidityOps is Ownable {
         for (uint i=0; i<tokens.length; i++) {
             rewardTokens.push(IERC20(tokens[i]));
         }
+    }
+
+    function setPegDefender(address _pegDefender) external onlyOwner {
+        pegDefender = _pegDefender;
+    }
+
+    function exchange(
+        int128 _i,
+        int128 _j,
+        address _coinIn,
+        uint256 _amount
+    ) external onlyPegDefender {
+        uint256 minAmount;
+        if (_coinIn == address(xlpToken)) {
+            uint256 balance = IERC20(address(xlpToken)).balanceOf(address(this));
+            require(_amount <= balance, "not enough tokens");
+            IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), _amount);
+        } else if (_coinIn == address(lpToken)) {
+            uint256 balance = lpToken.balanceOf(address(this));
+            require(_amount <= balance, "not enough tokens");
+            lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
+        }
+        minAmount =  curveStableSwap.get_dy(_i, _j, _amount);
+        uint256 amountReceived = curveStableSwap.exchange(_i, _j, _amount, minAmount);
+
+        emit CoinExchanged(_coinIn, _amount, amountReceived);
     }
 
     function lockInGauge(uint256 liquidity) private {
@@ -333,6 +361,11 @@ contract LiquidityOps is Ownable {
 
     modifier onlyOperator() {
         require(msg.sender == operator, "not operator");
+        _;
+    }
+
+    modifier onlyPegDefender() {
+        require(msg.sender == pegDefender, "not defender");
         _;
     }
 }
