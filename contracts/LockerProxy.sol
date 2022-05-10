@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IXLPToken {
+interface IXLPToken is IERC20 {
     function mint(address to, uint256 amount) external;
 }
 
@@ -16,6 +16,7 @@ interface IStaxLPStaking {
 contract LockerProxy is Ownable {
 
     using SafeERC20 for IERC20;
+    using SafeERC20 for IXLPToken;
 
     address public liquidityOps;
     IERC20 public lpToken; // lp token
@@ -54,7 +55,7 @@ contract LockerProxy is Ownable {
         // mint xlp token to user
         if (_stake) {
             xlpToken.mint(address(this), _liquidity);
-            IERC20(address(xlpToken)).safeIncreaseAllowance(address(xlpStaking), _liquidity);
+            xlpToken.safeIncreaseAllowance(address(xlpStaking), _liquidity);
             xlpStaking.stakeFor(msg.sender, _liquidity);
         } else {
             xlpToken.mint(msg.sender, _liquidity);

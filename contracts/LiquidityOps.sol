@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IXLPToken {
+interface IXLPToken is IERC20 {
     function mint(address to, uint256 amount) external;
 }
 
@@ -46,6 +46,7 @@ interface IStableSwap {
 
 contract LiquidityOps is Ownable {
     using SafeERC20 for IERC20;
+    using SafeERC20 for IXLPToken;
 
     IUnifiedFarm public lpFarm;          // frax unified lp farm
     IXLPToken public xlpToken;           // stax lp receipt;
@@ -182,7 +183,7 @@ contract LiquidityOps is Ownable {
         xlpToken.mint(address(this), _amount);
 
         lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-        IERC20(address(xlpToken)).safeIncreaseAllowance(address(curveStableSwap), _amount);
+        xlpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
 
         // The min token amount we're willing to accept
         // Takes into consideration a acceptable slippage + the curve pool fee
@@ -286,7 +287,7 @@ contract LiquidityOps is Ownable {
         for (uint i=0; i<rewardTokens.length; i++) {
             IERC20 token = rewardTokens[i];
             uint256 amount = token.balanceOf(address(this));
-            IERC20(token).safeTransfer(rewardsManager, amount);
+            token.safeTransfer(rewardsManager, amount);
 
             emit RewardHarvested(address(token), rewardsManager, amount);
         }
