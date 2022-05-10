@@ -193,7 +193,7 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setOtherParams(1e8), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
-            await shouldThrow(liquidityOps.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /Ownable: caller is not the owner/);
+            await shouldThrow(liquidityOps.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /only owner or defender/);
             
             await shouldThrow(liquidityOps.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
@@ -262,16 +262,21 @@ describe("Liquidity Ops", async () => {
           expect(await liquidityOps.rewardTokens(1)).to.eq(rewardTokens[1]);
         });
 
-        it("owner can recover tokens", async () => {
+        it("owner or peg defender can recover tokens", async () => {
             // Accidentally transfer some coin to the locker
             await v2pair.connect(alan).transfer(liquidityOps.address, 100);
+            await liquidityOps.setPegDefender(await frank.getAddress());
             
             // The owner can claim it back
-            await expect(liquidityOps.recoverToken(v2pair.address, await owner.getAddress(), 100))
+            await expect(liquidityOps.recoverToken(v2pair.address, await owner.getAddress(), 50))
                 .to.emit(liquidityOps, "TokenRecovered")
-                .withArgs(await owner.getAddress(), 100);
+                .withArgs(await owner.getAddress(), 50);
+            await expect(liquidityOps.connect(frank).recoverToken(v2pair.address, await frank.getAddress(), 50))
+                .to.emit(liquidityOps, "TokenRecovered")
+                .withArgs(await frank.getAddress(), 50);
             
-            expect(await v2pair.balanceOf(await owner.getAddress())).eq(100);
+            expect(await v2pair.balanceOf(await owner.getAddress())).eq(50);
+            expect(await v2pair.balanceOf(await frank.getAddress())).eq(50);
         });
 
         // to counter "transaction run out of gas errors"

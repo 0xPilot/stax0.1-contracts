@@ -351,7 +351,7 @@ contract LiquidityOps is Ownable {
 
     // recover tokens except reward tokens
     // for reward tokens use harvestRewards instead
-    function recoverToken(address _token, address _to, uint256 _amount) external onlyOwner {
+    function recoverToken(address _token, address _to, uint256 _amount) external onlyOwnerOrPegDefender {
         for (uint i=0; i<rewardTokens.length; i++) {
             require(_token != address(rewardTokens[i]), "can't recover reward token this way");
         }
@@ -369,6 +369,11 @@ contract LiquidityOps is Ownable {
 
     modifier onlyPegDefender() {
         require(msg.sender == pegDefender, "not defender");
+        _;
+    }
+
+    modifier onlyOwnerOrPegDefender {
+        require(msg.sender == owner() || msg.sender == pegDefender, "only owner or defender");
         _;
     }
 }
