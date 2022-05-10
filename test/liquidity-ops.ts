@@ -290,7 +290,7 @@ describe("Liquidity Ops", async () => {
 
             // Get some LP into the liquidity ops.
             await v2pair.connect(alan).approve(locker.address, 300);
-            await locker.connect(alan).lock(100);            
+            await locker.connect(alan).lock(100, false);            
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(100);
 
             const balancesBefore = await curvePool.get_balances({gasLimit:50000});
@@ -319,7 +319,7 @@ describe("Liquidity Ops", async () => {
             expect(lockedStake.liquidity).eq(0.8*100);  // From the first lock of 100, 80% of the LP is locked in the lpFarm
 
             // case next lock
-            await locker.connect(alan).lock(50);
+            await locker.connect(alan).lock(50, false);
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(50);
             await liquidityOps.applyLiquidity();
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
@@ -331,7 +331,7 @@ describe("Liquidity Ops", async () => {
             await mineForwardSeconds(7 * 86400);
 
             // try to lock in old kek_id, should create new lock
-            await locker.connect(alan).lock(50);
+            await locker.connect(alan).lock(50, false);
             await liquidityOps.applyLiquidity();
 
             expect(await lpFarm.lockedStakesOfLength(liquidityOps.address)).to.eq(2);
@@ -348,7 +348,7 @@ describe("Liquidity Ops", async () => {
 
             // Alan locks 100 LP
             await v2pair.connect(alan).approve(locker.address, 150);
-            expect(await locker.connect(alan).lock(100));
+            expect(await locker.connect(alan).lock(100, false));
 
             await expect(liquidityOps.applyLiquidity())
                 .to.emit(liquidityOps, "Locked")
@@ -363,14 +363,14 @@ describe("Liquidity Ops", async () => {
             const staxLPSupplyBefore2 = (await staxLPToken.totalSupply()).toNumber();
 
             // Alan locks another 50 LP
-            expect(await locker.connect(alan).lock(50));
+            expect(await locker.connect(alan).lock(50, false));
 
             // send Frank some lp tokens
             await v2pair.connect(templeMultisig).transfer(await frank.getAddress(), 100);
 
             // Frank locks 100 LP
             await v2pair.connect(frank).approve(locker.address, 100);
-            await locker.connect(frank).lock(100);
+            await locker.connect(frank).lock(100, false);
 
             // 80% of LP into the lpFarm and equiv xLP minted, 20% remains as LP in the locker.
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
@@ -401,7 +401,7 @@ describe("Liquidity Ops", async () => {
 
             // Get some LP into the liquidity ops.
             await v2pair.connect(alan).approve(locker.address, 300);
-            await locker.connect(alan).lock(100);
+            await locker.connect(alan).lock(100, false);
 
             await liquidityOps.applyLiquidity();
 
@@ -426,7 +426,7 @@ describe("Liquidity Ops", async () => {
             await v2pair.connect(alan).approve(locker.address, 300);
             await staxLPToken.addMinter(liquidityOps.address);
             await staxLPToken.addMinter(locker.address);
-            await locker.connect(alan).lock(100);
+            await locker.connect(alan).lock(100, false);
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
@@ -456,7 +456,7 @@ describe("Liquidity Ops", async () => {
             expect(newLockedStakes[0].lock_multiplier).to.eq(0);
 
             // lock, fast forward and relock again to ensure only one active lock
-            await locker.connect(alan).lock(50);
+            await locker.connect(alan).lock(50, false);
             await liquidityOps.applyLiquidity();
             await mineForwardSeconds(8 * 86400);
             await liquidityOps.withdrawAndRelock(newLockedStakes[1].kek_id);
@@ -485,7 +485,7 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setRewardsManager(rewardsManager.address);
        
             await v2pair.connect(alan).approve(locker.address, 10000);
-            await locker.connect(alan).lock(10000);
+            await locker.connect(alan).lock(10000, false);
             await liquidityOps.applyLiquidity();
         });
 
