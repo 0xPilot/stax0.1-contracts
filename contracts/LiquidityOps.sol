@@ -197,20 +197,24 @@ contract LiquidityOps is Ownable {
         address _coinIn,
         uint256 _amount
     ) external onlyPegDefender {
-        int128 i;
-        int128 j;
+        int128 i = 0; // index of the coin in
+        int128 j = 1; // index of the coin out
         if (_coinIn == address(xlpToken)) {
             uint256 balance = xlpToken.balanceOf(address(this));
             require(_amount <= balance, "not enough tokens");
             xlpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-            i=0;
-            j=1;
+            if (!curveStableSwap0IsXlpToken) {
+                i=1;
+                j=0;
+            }
         } else if (_coinIn == address(lpToken)) {
             uint256 balance = lpToken.balanceOf(address(this));
             require(_amount <= balance, "not enough tokens");
             lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-            i=1;
-            j=0;
+            if (curveStableSwap0IsXlpToken) {
+                i=1;
+                j=0;
+            }
         } else {
             revert("unknown token");
         }
