@@ -58,6 +58,7 @@ contract LiquidityOps is Ownable {
     IStableSwap public curveStableSwap;
 
     address public rewardsManager;
+    address public feeCollector;
     address public pegDefender;
     bool public curveStableSwap0IsXlpToken; // The order of curve pool tokens
 
@@ -66,6 +67,12 @@ contract LiquidityOps is Ownable {
     LockRate public lockRate;  
 
     struct LockRate {
+        uint128 numerator;
+        uint128 denominator;
+    }
+
+    FeeRate public feeRate;
+    struct FeeRate {
         uint128 numerator;
         uint128 denominator;
     }
@@ -82,15 +89,17 @@ contract LiquidityOps is Ownable {
     uint256 internal constant CURVE_FEE_DENOMINATOR = 1e10;
 
     event SetLockParams(uint128 numerator, uint128 denominator);
+    event SetFeeParams(uint128 numerator, uint128 denominator);
     event Locked(uint256 amountLocked);
     event LiquidityAdded(uint256 lpAmount, uint256 xlpAmount, uint256 curveTokenAmount);
     event LiquidityRemoved(uint256 lpAmount, uint256 xlpAmount, uint256 curveTokenAmount);
     event WithdrawAndReLock(bytes32 _kekId, uint256 amount);
-    event RewardHarvested(address token, address to, uint256 amount);
+    event RewardHarvested(address token, address to, uint256 distributionAmount, uint256 feeAmount);
     event RewardClaimed(uint256[] data);
     event SetVeFXSProxy(address proxy);
     event MigratorToggled(address migrator);
     event RewardsManagerSet(address manager);
+    event FeeCollectorSet(address feeCollector);
     event CurveStableSwap0IsXlpToken(bool curveStableSwap0IsXlpToken);
     event TokenRecovered(address user, uint256 amount);
     event CoinExchanged(address coinSent, uint256 amountSent, uint256 amountReceived);
@@ -102,14 +111,24 @@ contract LiquidityOps is Ownable {
         address _lpToken,
         address _xlpToken,
         address _curveStableSwap,
-        address _rewardsManager
+        address _rewardsManager,
+        address _feeCollector
     ) {
         lpFarm = IUnifiedFarm(_lpFarm);
         lpToken = IERC20(_lpToken);
         xlpToken = IXLPToken(_xlpToken);
         curveStableSwap = IStableSwap(_curveStableSwap);
         rewardsManager = _rewardsManager;
+        feeCollector = _feeCollector;
         curveLiquiditySlippage = 10**8; // 1% slippage
+        
+        // Lock all liquidity in the lpFarm as a (non-zero denominator) default.
+        lockRate.numerator = 100;
+        lockRate.denominator = 100;
+
+        // No fees are taken by default
+        feeRate.numerator = 0;
+        feeRate.denominator = 100;
     }
 
     function setCurvePool0() external {
@@ -118,7 +137,7 @@ contract LiquidityOps is Ownable {
     }
 
     function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
-        require(_numerator > 0 && _numerator <= _denominator, "invalid params");
+        require(_denominator > 0 && _numerator <= _denominator, "invalid params");
         lockRate.numerator = _numerator;
         lockRate.denominator = _denominator;
 
@@ -135,6 +154,21 @@ contract LiquidityOps is Ownable {
         rewardsManager = _manager;
 
         emit RewardsManagerSet(_manager);
+    }
+
+    function setFeeParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
+        require(_denominator > 0 && _numerator <= _denominator, "invalid params");
+        feeRate.numerator = _numerator;
+        feeRate.denominator = _denominator;
+
+        emit SetFeeParams(_numerator, _denominator);
+    }
+
+    function setFeeCollector(address _feeCollector) external onlyOwner {
+        require(_feeCollector != address(0), "invalid address");
+        feeCollector = _feeCollector;
+
+        emit FeeCollectorSet(_feeCollector);
     }
 
     function lockTimeForMaxMultiplier() public view returns (uint256) {
@@ -275,10 +309,6 @@ contract LiquidityOps is Ownable {
 
     // get amount to lock based on lock rate
     function _getLockAmount(uint256 _amount) internal view returns (uint256) {
-        // if not set, lock total amount
-        if (lockRate.numerator == 0) {
-            return _amount;
-        }
         return (_amount * lockRate.numerator) / lockRate.denominator;
     }
 
@@ -317,15 +347,28 @@ contract LiquidityOps is Ownable {
         emit RewardClaimed(data);
     }
 
+    // get amount to lock based on lock rate
+    function _getFeeAmount(uint256 _amount) internal view returns (uint256) {
+        return (_amount * feeRate.numerator) / feeRate.denominator;
+    }
+
     // harvest rewards
     function harvestRewards() external {
         // iterate through reward tokens and transfer to rewardsManager
         for (uint i=0; i<rewardTokens.length; i++) {
             IERC20 token = rewardTokens[i];
-            uint256 amount = token.balanceOf(address(this));
-            token.safeTransfer(rewardsManager, amount);
+            uint256 totalAmount = token.balanceOf(address(this));
 
-            emit RewardHarvested(address(token), rewardsManager, amount);
+            uint256 feeAmount = _getFeeAmount(totalAmount);
+            uint256 distributionAmount;
+            unchecked {
+                distributionAmount = totalAmount - feeAmount;
+            }
+
+            token.safeTransfer(feeCollector, feeAmount);
+            token.safeTransfer(rewardsManager, distributionAmount);
+
+            emit RewardHarvested(address(token), rewardsManager, distributionAmount, feeAmount);
         }
     }
 

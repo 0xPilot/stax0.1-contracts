@@ -26,6 +26,7 @@ describe("Liquidity Ops", async () => {
     let alan: Signer;
     let frank: Signer;
     let validProxy: Signer;
+    let feeCollector: Signer;
     let lpBigHolder: Signer;
     let fraxMultisig: Signer;
     let templeMultisig: Signer;
@@ -56,7 +57,7 @@ describe("Liquidity Ops", async () => {
     });
 
     beforeEach(async () => {
-        [owner, alan, frank, validProxy] = await ethers.getSigners();
+        [owner, alan, frank, validProxy, feeCollector] = await ethers.getSigners();
         
         // lp token
         v2pair = TempleUniswapV2Pair__factory.connect(lpTokenAddress, owner);
@@ -100,7 +101,7 @@ describe("Liquidity Ops", async () => {
         }
 
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
-            curvePool.address, rewardsManager.address);
+            curvePool.address, rewardsManager.address, await feeCollector.getAddress());
 
         locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address, staking.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
@@ -191,6 +192,7 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).setPegDefender(await frank.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
+            await shouldThrow(liquidityOps.connect(alan).setFeeParams(20, 100), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setOtherParams(1e8), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /only owner or defender/);
@@ -207,6 +209,7 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setPegDefender(await frank.getAddress());
             await liquidityOps.setLPFarm(lpFarm.address);
             await liquidityOps.setLockParams(80, 100);
+            await liquidityOps.setFeeParams(20, 100);
             await liquidityOps.setOtherParams(1e8);
             await liquidityOps.setRewardsManager(await alan.getAddress());
             await liquidityOps.stakerToggleMigrator(await owner.getAddress());
@@ -237,6 +240,13 @@ describe("Liquidity Ops", async () => {
             expect(denominator.toNumber()).to.eq(100);
         });
 
+        it("should set fee params", async() => {
+            await liquidityOps.setFeeParams(30, 100);
+            const [numerator, denominator] = await liquidityOps.feeRate();
+            expect(numerator.toNumber()).to.eq(30);
+            expect(denominator.toNumber()).to.eq(100);
+        });
+
         it("should set other params", async() => {
             await liquidityOps.setOtherParams(1e8);
             expect(await liquidityOps.curveLiquiditySlippage()).eq(1e8);
@@ -245,6 +255,11 @@ describe("Liquidity Ops", async () => {
         it("should set rewards manager", async() => {
             await liquidityOps.setRewardsManager(rewardsManager.address);
             expect(await liquidityOps.rewardsManager()).to.eq(rewardsManager.address);
+        });
+
+        it("should set fee collector", async() => {
+            await liquidityOps.setFeeCollector(await feeCollector.getAddress());
+            expect(await liquidityOps.feeCollector()).to.eq(await feeCollector.getAddress());
         });
 
         it("should toggle migrator for migration", async () => {
@@ -546,9 +561,6 @@ describe("Liquidity Ops", async () => {
             // lock more to introduce some lp in liquidity ops
             await v2pair.connect(alan).approve(locker.address, toExchange);
             await locker.connect(alan).lock(toExchange, false);
-
-            const lpBalanceBefore = await v2pair.balanceOf(liquidityOps.address);
-            const xlpBalanceBefore = await staxLPToken.balanceOf(liquidityOps.address);
             
             const amountToReceive = await curvePool.get_dy(1, 0, toExchange);
             await expect(liquidityOps.connect(frank).exchange(1, 0, v2pair.address, toExchange))
@@ -563,12 +575,14 @@ describe("Liquidity Ops", async () => {
     describe("Rewards", async () => {
         beforeEach(async () => {
             await liquidityOps.setLockParams(100, 100);
+            await liquidityOps.setFeeParams(20, 100);
             await liquidityOps.setCurvePool0();
             await staxLPToken.addMinter(locker.address);
             await staxLPToken.addMinter(liquidityOps.address);
 
             await liquidityOps.setRewardTokens();
             await liquidityOps.setRewardsManager(rewardsManager.address);
+            await liquidityOps.setFeeCollector(await feeCollector.getAddress());
        
             await v2pair.connect(alan).approve(locker.address, 10000);
             await locker.connect(alan).lock(10000, false);
@@ -593,7 +607,7 @@ describe("Liquidity Ops", async () => {
             const templeBalanceAfter = await templeToken.balanceOf(liquidityOps.address);
 
             expect(fxsBalanceAfter).to.gt(fxsBalanceBefore);
-            expect(templeBalanceAfter).to.gt(templeBalanceBefore);            
+            expect(templeBalanceAfter).to.gt(templeBalanceBefore);
         });
 
         it("harvests rewards", async () => {
@@ -612,14 +626,24 @@ describe("Liquidity Ops", async () => {
             expect(fxsBalanceAfter).gt(fxsBalanceBefore);
             expect(templeBalanceAfter).gt(templeBalanceBefore);
 
+            // The fee collector doesn't yet have rewards.
+            expect(await fxsToken.balanceOf(await feeCollector.getAddress())).eq(0);
+            expect(await templeToken.balanceOf(await feeCollector.getAddress())).eq(0);
+
             await expect(liquidityOps.harvestRewards())
                 .to.emit(liquidityOps, "RewardHarvested");
 
             // Now rewards manager has the rewards.
             expect(await templeToken.balanceOf(liquidityOps.address)).eq(0);
             expect(await fxsToken.balanceOf(liquidityOps.address)).eq(0);
-            expect(await templeToken.balanceOf(rewardsManager.address)).eq(templeBalanceAfter);
-            expect(await fxsToken.balanceOf(rewardsManager.address)).eq(fxsBalanceAfter);
+            const rewardsManagerTempleAfter = await templeToken.balanceOf(rewardsManager.address);
+            const rewardsManagerFXSAfter = await fxsToken.balanceOf(rewardsManager.address);
+            const feeCollectorTempleAfter = await templeToken.balanceOf(await feeCollector.getAddress());
+            const feeCollectorFXSAfter = await fxsToken.balanceOf(await feeCollector.getAddress());
+
+            // Rewards are split between the rewards manager and the fee collector
+            expect(rewardsManagerTempleAfter.add(feeCollectorTempleAfter)).eq(templeBalanceAfter);
+            expect(rewardsManagerFXSAfter.add(feeCollectorFXSAfter)).eq(fxsBalanceAfter);
         });
     });
 });

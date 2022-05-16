@@ -100,7 +100,7 @@ describe("Staking", async () => {
         }
         
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
-            curvePool.address, rewardsManager.address);
+            curvePool.address, rewardsManager.address, await owner.getAddress());
 
         locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address, staking.address);
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);

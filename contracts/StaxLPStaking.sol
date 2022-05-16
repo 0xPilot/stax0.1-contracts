@@ -110,19 +110,12 @@ contract StaxLPStaking is Ownable {
         public
         updateReward(msg.sender)
     {
-        require(_amount > 0, "RewardPool : Cannot stake 0");
-        
-        stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
-
-        _totalSupply += _amount;
-        _balances[msg.sender] += _amount;
-
-        emit Staked(msg.sender, _amount);
+        stakeFor(msg.sender, _amount);
     }
 
     function stakeAll() external {
         uint256 balance = stakingToken.balanceOf(msg.sender);
-        stake(balance);
+        stakeFor(msg.sender, balance);
     }
 
     function stakeFor(address _for, uint256 _amount)
