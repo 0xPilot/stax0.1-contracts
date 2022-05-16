@@ -357,18 +357,18 @@ contract LiquidityOps is Ownable {
         // iterate through reward tokens and transfer to rewardsManager
         for (uint i=0; i<rewardTokens.length; i++) {
             IERC20 token = rewardTokens[i];
-            uint256 totalAmount = token.balanceOf(address(this));
+            uint256 amount = token.balanceOf(address(this));
+            uint256 feeAmount = _getFeeAmount(amount);
 
-            uint256 feeAmount = _getFeeAmount(totalAmount);
-            uint256 distributionAmount;
-            unchecked {
-                distributionAmount = totalAmount - feeAmount;
+            if (feeAmount > 0) {
+                amount -= feeAmount;
+                token.safeTransfer(feeCollector, feeAmount);
+            }
+            if (amount > 0) {
+                token.safeTransfer(rewardsManager, amount);
             }
 
-            token.safeTransfer(feeCollector, feeAmount);
-            token.safeTransfer(rewardsManager, distributionAmount);
-
-            emit RewardHarvested(address(token), rewardsManager, distributionAmount, feeAmount);
+            emit RewardHarvested(address(token), rewardsManager, amount, feeAmount);
         }
     }
 
