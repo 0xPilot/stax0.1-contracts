@@ -203,7 +203,7 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).removeLiquidity(100, 0, 0), /not defender/);
             await shouldThrow(liquidityOps.connect(owner).removeLiquidity(100, 0, 0), /not defender/);
             await shouldThrow(liquidityOps.connect(alan).removeLiquidityImbalance([10, 1], 100), /not defender/);
-            await shouldThrow(liquidityOps.connect(alan).exchange(0, 1, v2pair.address, 100), /not defender/);
+            await shouldThrow(liquidityOps.connect(alan).exchange(v2pair.address, 100), /not defender/);
 
             // happy paths
             await liquidityOps.setPegDefender(await frank.getAddress());
@@ -219,8 +219,9 @@ describe("Liquidity Ops", async () => {
 
             await shouldThrow(liquidityOps.connect(frank).removeLiquidity(100, 0, 0), /not enough tokens/);
             await shouldThrow(liquidityOps.applyLiquidity(), /not enough liquidity/);
-            await shouldThrow(liquidityOps.connect(frank).exchange(0, 1, v2pair.address, 100), /not enough tokens/);
+            await shouldThrow(liquidityOps.connect(frank).exchange(v2pair.address, 100), /not enough tokens/);
             await shouldThrow(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], 100), /no liquidity/);
+            await shouldThrow(liquidityOps.connect(frank).exchange(fxsToken.address, 100), /unknown token/);
         });
 
         it("should set peg defender", async () => {
@@ -563,7 +564,7 @@ describe("Liquidity Ops", async () => {
             await locker.connect(alan).lock(toExchange, false);
             
             const amountToReceive = await curvePool.get_dy(1, 0, toExchange);
-            await expect(liquidityOps.connect(frank).exchange(1, 0, v2pair.address, toExchange))
+            await expect(liquidityOps.connect(frank).exchange(v2pair.address, toExchange))
                 .to.emit(liquidityOps, "CoinExchanged")
                 .withArgs(v2pair.address, toExchange, amountToReceive);
             const balance0After = await curvePool.balances(0, {gasLimit: 100000});
