@@ -7,7 +7,6 @@ import {
 } from '../helpers';
 
 async function main() {
-  console.log("stax main!");
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
 

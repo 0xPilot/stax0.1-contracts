@@ -6,6 +6,8 @@ import '@nomiclabs/hardhat-ganache'; // for testing
 import '@nomiclabs/hardhat-ethers';
 import '@nomiclabs/hardhat-etherscan';
 import "@nomiclabs/hardhat-vyper";
+import "hardhat-contract-sizer";
+import "hardhat-gas-reporter";
 
 // NOTE: Any tasks that depend on the generated typechain makes the build flaky.
 //       Favour scripts instead
@@ -56,7 +58,7 @@ module.exports = {
     ],
   },
   vyper: {
-    compilers: [{ version: "0.2.8" }, { version: "0.2.15" }, { version: "0.3.0" }],
+    compilers: [{ version: "0.2.8" }, { version: "0.2.15" }, { version: "0.3.1" }],
   },
   typechain: {
     target: 'ethers-v5',
@@ -93,4 +95,7 @@ module.exports = {
   mocha: {
     timeout: 120000,
   },
+  contractSizer: {
+    alphaSort: true,
+  }
 };

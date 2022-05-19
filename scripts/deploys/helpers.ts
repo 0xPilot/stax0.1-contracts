@@ -58,9 +58,6 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     LIQUIDITY_OPS: '0x4eC985ec661F30a6982244Ff4A53Ab559bEF3F87',
     LOCKER_PROXY: '0xc776a9842bfa55998d29aa7DB1F96bA6A5Ee2A83', 
 
-    // locker proxy
-    LOCKER_PROXY: '',
-
     // FXS
     FXS_GAUGE_CONTROLLER: '0x370eB2c1747a087c1798440cb42C4dddd838b430',
     FRAX_TEMPLE_UNIFIED_FARM: '0x64cA87224370c4a732B863b6950CD1f8fbD91d29',
@@ -87,21 +84,16 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     LIQUIDITY_OPS: '',
     LOCKER_PROXY: '',
 
-
     // Unused in mainnet deploy:
     FXS_GAUGE_CONTROLLER: '',
-    FRAX_TEMPLE_UNIFIED_FARM: '',
     VEFXS: '',
 
-    CURVE_POOL: '',
-    CURVE_FACTORY: '',
     CURVE_POOL_IMPLEMENTATION: '',
     TEMPLE_V2_ROUTER: '',
     TEMPLE: '',
     TREASURY: '',
     TREASURY_MANAGEMENT: '',
     FRAX: '',
-    FXS_GAUGE_CONTROLLER: '',
   },
   localhost: {
     // STAX contracts are deterministic when forking mainnet with:

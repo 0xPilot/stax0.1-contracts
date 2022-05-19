@@ -1,5 +1,9 @@
 {
-  "name": "hardhat-project",
+  "name": "stax",
+  "version": "1.0.0",
+  "description": "STAX smart contracts",
+  "author": "TempleDAO",
+  "license": "GPL-3.0-or-later",
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.5",
     "@nomiclabs/hardhat-etherscan": "^3.0.3",
@@ -26,6 +30,7 @@
     "ethereum-waffle": "^3.4.4",
     "ethers": "^5.6.3",
     "hardhat": "^2.9.3",
+    "hardhat-contract-sizer": "^2.5.1",
     "hardhat-gas-reporter": "^1.0.8",
     "prettier": "^2.6.2",
     "prettier-plugin-solidity": "^1.0.0-beta.19",
@@ -37,5 +42,22 @@
   },
   "dependencies": {
     "@nomiclabs/hardhat-ganache": "^2.0.1"
+  },
+  "scripts": {
+    "compile": "hardhat compile",
+    "typechain": "hardhat typechain",
+    "clean": "hardhat clean",
+    "size": "hardhat size-contracts",
+    "test": "hardhat test",
+    "local-node": "hardhat node",
+    "hardhat:local": "hardhat --network localhost",
+    "hardhat:testnet": "hardhat --network rinkeby",
+    "hardhat:mainnet": "hardhat --network mainnet",
+    "local-fork": "hardhat node --fork https://eth-mainnet.alchemyapi.io/v2/6Yl6OwVH9Y7Swu6nVl4AEiv3y4rbZa-L --fork-block-number 14702622",
+    "local-fork:deploy": "$PWD/scripts/deploys/localhost/deploy-localhost-fork.sh",
+    "local-fork:populate": "hardhat run --network localhost scripts/deploys/localhost/999-localhost-fork-test.ts"
+  },
+  "engines": {
+    "node": "16.x"
   }
 }

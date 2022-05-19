@@ -1,46 +1,61 @@
 # Stax Contracts v0.1
 
-This project demonstrates an advanced Hardhat use case, integrating other tools commonly used alongside Hardhat in the ecosystem.
+## Getting Started
 
-The project comes with a sample contract, a test for that contract, a sample script that deploys that contract, and an example of a task implementation, which simply lists the available accounts. It also comes with a variety of other tools, preconfigured to work with the project code.
+### Requirements
 
-Try running some of the following tasks:
+* node
+* yarn
 
-```shell
-npx hardhat accounts
-npx hardhat compile
-npx hardhat clean
-npx hardhat test
-npx hardhat node
-npx hardhat help
-REPORT_GAS=true npx hardhat test
-npx hardhat coverage
-npx hardhat run scripts/deploy.ts
-TS_NODE_FILES=true npx ts-node scripts/deploy.ts
-npx eslint '**/*.{js,ts}'
-npx eslint '**/*.{js,ts}' --fix
-npx prettier '**/*.{json,sol,md}' --check
-npx prettier '**/*.{json,sol,md}' --write
-npx solhint 'contracts/**/*.sol'
-npx solhint 'contracts/**/*.sol' --fix
+This repository uses `.nvmrc` to dictate the version of node required to compile and run the project. This will allow you to use `nvm` followed by either `nvm use` or `nvm install` to automatically set the right version of node in that terminal session.
+
+This project uses yarn workspaces to share common dependencies between all the applications. Before attempting to run any of the apps, you'll want to run `yarn install` from the root of the project.
+
+### Contracts
+
+#### Local Deployment
+
+The protocol app uses hardhat for development. The following steps will compile the contracts and deploy to a local hardhat node
+
+```bash
+# Compile the contracts
+yarn compile
+
+# Generate the typechain.
+yarn typechain
+
+# NB: Vyper generated typechain is buggy - see below. Restore any committed versions.
+git checkout `git ls-files -m "typechain/factories/*.ts"`
+
+# In one terminal window, run a local node forked off mainnet
+yarn local-fork
+
+# In another window, run the deploy script
+yarn local-fork:deploy
 ```
 
-# Etherscan verification
+The protocol test suite can be run without deploying to a local-node by running
 
-To try out Etherscan verification, you first need to deploy a contract to an Ethereum network that's supported by Etherscan, such as Ropsten.
-
-In this project, copy the .env.example file to a file named .env, and then edit it to fill in the details. Enter your Etherscan API key, your Ropsten node URL (eg from Alchemy), and the private key of the account which will send the deployment transaction. With a valid .env file in place, first deploy your contract:
-
-```shell
-hardhat run --network ropsten scripts/deploy.ts
+```bash
+# Run tests, no deployment neccessary
+yarn test
 ```
 
-Then, copy the deployment address and paste it in to replace `DEPLOYED_CONTRACT_ADDRESS` in this command:
+#### Vyper Typechain Bugs
 
-```shell
-npx hardhat verify --network ropsten DEPLOYED_CONTRACT_ADDRESS "Hello, Hardhat!"
-```
+For testing, we depend on Vyper for Curve contracts. The generated typechain for these are buggy (gas field in ABI should be a string), so local a .ts is checked-in.
+https://github.com/dethcrypto/TypeChain/issues/677
+https://github.com/NomicFoundation/hardhat/issues/1696
 
-# Performance optimizations
+Normally gas shouldn't be explicitly added into the typechain ABI. It causes further issues in testing where `contract.fn(..., {gasLimit:50000})` has to be manually added as options to any write functions on the contract.
 
-For faster runs of your tests and scripts, consider skipping ts-node's type checking by setting the environment variable `TS_NODE_TRANSPILE_ONLY` to `1` in hardhat's environment. For more details see [the documentation](https://hardhat.org/guides/typescript.html#performance-optimizations).
+## VSCode Testing
+
+https://hardhat.org/guides/vscode-tests.html
+
+tl;dr;
+
+  1. Install https://marketplace.visualstudio.com/items?itemName=hbenl.vscode-mocha-test-adapter
+  2. Set the VSCode config value `"mochaExplorer.files": "test/**/*.{j,t}s"`
+  3. Reload VSCode, click the flask icon, see all tests :)
+  
