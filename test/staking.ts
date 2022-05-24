@@ -1,7 +1,7 @@
 import { ethers, network } from "hardhat";
-import { Contract, Signer, BigNumber } from "ethers";
+import { Signer, BigNumber } from "ethers";
 import { expect } from "chai";
-import { mineForwardSeconds, shouldThrow, blockTimestamp } from "./helpers";
+import { mineForwardSeconds, shouldThrow, blockTimestamp, ZERO_ADDRESS } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
     LockerProxy, LockerProxy__factory, 
@@ -11,14 +11,16 @@ import {
     FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
     ERC20, ERC20__factory, 
     LiquidityOps, LiquidityOps__factory,
-    CurvePool, CurvePool__factory,
-    CurveFactory, CurveFactory__factory
+    CurvePool, 
+    TempleUniswapV2Pair, FraxUnifiedFarmERC20,
+    StaxLockerReceiptRouter, StaxLockerReceiptRouter__factory
 } from "../typechain";
-import { curveFactoryAddress, fraxMultisigAddress,
+import { fraxMultisigAddress,
     fraxUnifiedFarmAddress, fxsTokenAddress,
     lpBigHolderAddress, lpTokenAddress,
     templeMultisigAddress, templeTokenAddress 
 } from "./addresses";
+import { createCurveStableSwap } from "./curve-pool-helper";
 
 describe("Staking", async () => {
     let owner: Signer;
@@ -27,9 +29,9 @@ describe("Staking", async () => {
     let lpBigHolder: Signer;
     let fraxMultisig: Signer;
     let templeMultisig: Signer;
-    let v2pair: Contract; //TempleUniswapV2Pair
+    let v2pair: TempleUniswapV2Pair
     let locker: LockerProxy;
-    let lpFarm: Contract; //FraxUnifiedFarmERC20;
+    let lpFarm: FraxUnifiedFarmERC20;
     let rewardsManager: RewardsManager;
     let staking: StaxLPStaking;
     let fxsToken: ERC20;
@@ -37,8 +39,8 @@ describe("Staking", async () => {
     let staxLPToken: StaxLP;
     let liquidityOps: LiquidityOps;
     let curvePool: CurvePool;
-    let curveFactory: CurveFactory;
-    const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+    let receiptRouter: StaxLockerReceiptRouter;
+
     const ONE_E_18 = BigNumber.from(10).pow(18);
 
     before( async () => {
@@ -65,108 +67,68 @@ describe("Staking", async () => {
         lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(fraxUnifiedFarmAddress, alan);
         rewardsManager = await new RewardsManager__factory(owner).deploy(staking.address);
 
-        // Create the curve stable swap
+        // impersonate temple msig
         {
-            curveFactory = CurveFactory__factory.connect(curveFactoryAddress, owner);
-            const numPoolsBefore = await curveFactory.pool_count({gasLimit: 300000});
-
-            // weird type bug in this test
-            const coins: [string,string,string,string] = [
-                staxLPToken.address, v2pair.address,
-                ZERO_ADDRESS, ZERO_ADDRESS];
-            const A = 200;
-            const fee = 4000000; // 0.04% - the minimum
-            const assetType = 3; // 'Other'
-            // curveFactory.plain_implementations[N_COINS][idx]
-            // curveFactory.plain_implementations(2, 3) = 0x4A4d7868390EF5CaC51cDA262888f34bD3025C3F
-            const implementationIndex = 3;
-            // The deploy_plain_pool doesn't get added to the object correctly from the ABI (perhaps because it's overloaded)
-            // We need to call it by name
-            await expect(curveFactory.functions['deploy_plain_pool(string,string,address[4],uint256,uint256,uint256,uint256)']
-                ("STAX TEMPLE/FRAX xLP + LP", "xTFLP+TFLP", coins, A, fee, assetType, implementationIndex))
-                .to.emit(curveFactory, "PlainPoolDeployed")
-                .withArgs(coins, A, fee, await owner.getAddress());
-            
-            expect(await curveFactory.pool_count({gasLimit: 300000})).to.eq(numPoolsBefore.add(1));
-        
-            const curvePoolAddresses = await curveFactory.functions['find_pool_for_coins(address,address)']
-                (staxLPToken.address, v2pair.address, {gasLimit: 300000});
-            expect(curvePoolAddresses.length).eq(1);
-            const curvePoolAddress = curvePoolAddresses[0];
-            expect(curvePoolAddress).not.eq(ZERO_ADDRESS);
-
-            curvePool = CurvePool__factory.connect(curvePoolAddress, owner);
-            expect((await curvePool.name({gasLimit: 300000}))).eq('Curve.fi Factory Plain Pool: STAX TEMPLE/FRAX xLP + LP');
+            await network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [templeMultisigAddress]
+            });
+            templeMultisig = await ethers.getSigner(templeMultisigAddress);
         }
+
+        // impersonate account and transfer lp tokens
+        {
+            await network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [lpBigHolderAddress],
+            });
+            lpBigHolder = await ethers.getSigner(lpBigHolderAddress);
+
+            await v2pair.connect(lpBigHolder).transfer(await templeMultisig.getAddress(), 1000000);
+        }
+
+        curvePool = await createCurveStableSwap(owner, staxLPToken, v2pair, templeMultisig);
         
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
             curvePool.address, rewardsManager.address, await owner.getAddress());
+        receiptRouter = await new StaxLockerReceiptRouter__factory(owner).deploy(
+            v2pair.address, staxLPToken.address, curvePool.address);
+        await staxLPToken.addMinter(receiptRouter.address);
 
-        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, staxLPToken.address, staking.address);
+        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, 
+            staxLPToken.address, staking.address, receiptRouter.address);
+
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
 
-        // impersonate temple msig
-        await network.provider.request({
-            method: "hardhat_impersonateAccount",
-            params: [templeMultisigAddress]
-        });
-        templeMultisig = await ethers.getSigner(templeMultisigAddress);
-        
-        // impersonate account and transfer lp tokens
-        await network.provider.request({
-            method: "hardhat_impersonateAccount",
-            params: [lpBigHolderAddress],
-        });
-        lpBigHolder = await ethers.getSigner(lpBigHolderAddress);
-
-        await v2pair.connect(lpBigHolder).transfer(await templeMultisig.getAddress(), 10000);
-
         // impersonate frax comptroller /multisig and reduce lock time for max multiplier
-        await network.provider.request({
-            method: "hardhat_impersonateAccount",
-            params: [fraxMultisigAddress]
-        });
-        fraxMultisig = await ethers.getSigner(fraxMultisigAddress);
-        await lpFarm.connect(fraxMultisig).setMiscVariables([
-            BigNumber.from("3000000000000000000"),
-            BigNumber.from("2000000000000000000"),
-            BigNumber.from("2000000000000000000"),
-            BigNumber.from("4000000000000000000"),
-            BigNumber.from(86400 * 7), // max lock time: reduce to 7 days
-            BigNumber.from(86400 * 1) // min lock time
-        ]);
+        {
+            await network.provider.request({
+                method: "hardhat_impersonateAccount",
+                params: [fraxMultisigAddress]
+            });
+            fraxMultisig = await ethers.getSigner(fraxMultisigAddress);
+            await lpFarm.connect(fraxMultisig).setMiscVariables([
+                BigNumber.from("3000000000000000000"),
+                BigNumber.from("2000000000000000000"),
+                BigNumber.from("2000000000000000000"),
+                BigNumber.from("4000000000000000000"),
+                BigNumber.from(86400 * 7), // reduce to 7 days
+                BigNumber.from(86400 * 1) // min lock time
+            ]);
 
-        // Set the gauge temple rewards to a higher rate (same as fxs as of now)
-        await lpFarm.connect(fraxMultisig).setRewardVars(
-            templeToken.address, await lpFarm.rewardRates(0), 
-            ZERO_ADDRESS, ZERO_ADDRESS);
+            // Set the gauge temple rewards to a higher rate (same as fxs as of now)
+            await lpFarm.connect(fraxMultisig).setRewardVars(
+                templeToken.address, await lpFarm.rewardRates(0), 
+                ZERO_ADDRESS, ZERO_ADDRESS);
+        }
             
         await liquidityOps.setRewardTokens();
         await staking.setRewardDistributor(rewardsManager.address);
         await staking.addReward(fxsToken.address);
         await staking.addReward(templeToken.address);
 
-        // Seed the pool 1:1
-        {
-            // Assume it's done manually from some temple msig
-            await staxLPToken.addMinter(await templeMultisig.getAddress());
-            await staxLPToken.connect(templeMultisig).mint(await templeMultisig.getAddress(), 10000);
-
-            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 9000);
-            await v2pair.connect(templeMultisig).approve(curvePool.address, 9000);
-
-            // Send the msig some eth for the transaction.
-            await owner.sendTransaction({
-                to: await templeMultisig.getAddress(),
-                value: ethers.utils.parseEther("0.2"),
-              });
-            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([9000, 9000], 1, await templeMultisig.getAddress());
-        }
-
         await liquidityOps.setLockParams(80, 100);
-        await liquidityOps.setCurvePool0();
         await staxLPToken.addMinter(locker.address);
         await staxLPToken.addMinter(liquidityOps.address);
     });
@@ -225,12 +187,15 @@ describe("Staking", async () => {
         async function testRewardCalcs(lockAndStakeAmount: BigNumber, fxsRewards: BigNumber, templeRewards: BigNumber) {
             // Give alan some LP, and lock it.
             await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), lockAndStakeAmount);
-            await v2pair.connect(alan).approve(locker.address, lockAndStakeAmount);
-            await locker.connect(alan).lock(lockAndStakeAmount, false);
+            await v2pair.connect(alan).approve(receiptRouter.address, lockAndStakeAmount);
+            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
+            await locker.connect(alan).lock(lockAndStakeAmount, false, ammQuote, {gasLimit: 500000});
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(lockAndStakeAmount);
 
             // lock stake and add liquidity
-            await liquidityOps.applyLiquidity();
+            const slippage = 5e9;
+            const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(lockAndStakeAmount, slippage);
+            await liquidityOps.applyLiquidity(lockAndStakeAmount, minCurveAmountOut);
 
             // stake xLP tokens
             const xlpBalAlan = await staxLPToken.balanceOf(await alan.getAddress());
@@ -295,8 +260,9 @@ describe("Staking", async () => {
             // Ben stakes some more to make things even more interesting.
             const lockAndStakeAmount2 = 20000000;
             await v2pair.connect(lpBigHolder).transfer(await ben.getAddress(), lockAndStakeAmount2);
-            await v2pair.connect(ben).approve(locker.address, lockAndStakeAmount2);
-            await locker.connect(ben).lock(lockAndStakeAmount2, true);
+            await v2pair.connect(ben).approve(receiptRouter.address, lockAndStakeAmount2);
+            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(100);
+            await locker.connect(ben).lock(lockAndStakeAmount2, true, ammQuote2, {gasLimit: 500000});
 
             // Staking above updated the reward data - check it matches expectations
             const fxsRewardData = await staking.rewardData(fxsToken.address);

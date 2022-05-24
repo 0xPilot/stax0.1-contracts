@@ -71,3 +71,5 @@ export function toAtto(n: number): BigNumber {
 export function fromAtto(n: BigNumber): number {
   return Number.parseFloat(ethers.utils.formatUnits(n, 18));
 }
+
+export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";

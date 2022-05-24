@@ -60,7 +60,10 @@ contract LiquidityOps is Ownable {
     address public rewardsManager;
     address public feeCollector;
     address public pegDefender;
-    bool public curveStableSwap0IsXlpToken; // The order of curve pool tokens
+
+    // The order of curve pool tokens
+    int128 public inputTokenIndex;
+    int128 public staxReceiptTokenIndex;
 
     // How much of user LP do we add into gauge.
     // The remainder is added as liquidity into curve pool
@@ -80,11 +83,6 @@ contract LiquidityOps is Ownable {
     // fxs emissions + random token extra bribe
     IERC20[] public rewardTokens;
 
-    // Slippage on expected curve liquidity tokens when adding liquidity into curve.
-    // Don't include fees in this - they are already auto-added into the tolerance.
-    // 1e10 precision (same as curve fees) - so 1% = 1e8, 100% = 1e10
-    uint256 public curveLiquiditySlippage;
-
     // FEE_DENOMINATOR from Curve StableSwap
     uint256 internal constant CURVE_FEE_DENOMINATOR = 1e10;
 
@@ -100,7 +98,6 @@ contract LiquidityOps is Ownable {
     event MigratorToggled(address migrator);
     event RewardsManagerSet(address manager);
     event FeeCollectorSet(address feeCollector);
-    event CurveStableSwap0IsXlpToken(bool curveStableSwap0IsXlpToken);
     event TokenRecovered(address user, uint256 amount);
     event CoinExchanged(address coinSent, uint256 amountSent, uint256 amountReceived);
     event RemovedLiquidityImbalance(uint256 _amount0, uint256 _amounts1, uint256 burnAmount);
@@ -117,10 +114,14 @@ contract LiquidityOps is Ownable {
         lpFarm = IUnifiedFarm(_lpFarm);
         lpToken = IERC20(_lpToken);
         xlpToken = IXLPToken(_xlpToken);
+
         curveStableSwap = IStableSwap(_curveStableSwap);
+        (staxReceiptTokenIndex, inputTokenIndex) = curveStableSwap.coins(0) == address(xlpToken)
+            ? (int128(0), int128(1))
+            : (int128(1), int128(0));
+
         rewardsManager = _rewardsManager;
         feeCollector = _feeCollector;
-        curveLiquiditySlippage = 10**8; // 1% slippage
         
         // Lock all liquidity in the lpFarm as a (non-zero denominator) default.
         lockRate.numerator = 100;
@@ -131,22 +132,12 @@ contract LiquidityOps is Ownable {
         feeRate.denominator = 100;
     }
 
-    function setCurvePool0() external {
-        curveStableSwap0IsXlpToken = curveStableSwap.coins(0) == address(xlpToken);
-        emit CurveStableSwap0IsXlpToken(curveStableSwap0IsXlpToken);
-    }
-
     function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
         require(_denominator > 0 && _numerator <= _denominator, "invalid params");
         lockRate.numerator = _numerator;
         lockRate.denominator = _denominator;
 
         emit SetLockParams(_numerator, _denominator);
-    }
-
-    function setOtherParams(uint256 _curveLiquiditySlippage) external onlyOwner {
-        require(_curveLiquiditySlippage > 0 && _curveLiquiditySlippage <= CURVE_FEE_DENOMINATOR, "invalid percentage");
-        curveLiquiditySlippage = _curveLiquiditySlippage;
     }
 
     function setRewardsManager(address _manager) external onlyOwner {
@@ -195,31 +186,25 @@ contract LiquidityOps is Ownable {
 
     function exchange(
         address _coinIn,
-        uint256 _amount
+        uint256 _amount,
+        uint256 _minAmountOut
     ) external onlyPegDefender {
-        int128 i = 0; // index of the coin in
-        int128 j = 1; // index of the coin out
+        (int128 in_index, int128 out_index) = (staxReceiptTokenIndex, inputTokenIndex);
+
         if (_coinIn == address(xlpToken)) {
             uint256 balance = xlpToken.balanceOf(address(this));
             require(_amount <= balance, "not enough tokens");
             xlpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-            if (!curveStableSwap0IsXlpToken) {
-                i=1;
-                j=0;
-            }
         } else if (_coinIn == address(lpToken)) {
             uint256 balance = lpToken.balanceOf(address(this));
             require(_amount <= balance, "not enough tokens");
             lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
-            if (curveStableSwap0IsXlpToken) {
-                i=1;
-                j=0;
-            }
+            (in_index, out_index) = (inputTokenIndex, staxReceiptTokenIndex);
         } else {
             revert("unknown token");
         }
-        uint256 minAmount =  curveStableSwap.get_dy(i, j, _amount);
-        uint256 amountReceived = curveStableSwap.exchange(i, j, _amount, minAmount);
+
+        uint256 amountReceived = curveStableSwap.exchange(in_index, out_index, _amount, _minAmountOut);
 
         emit CoinExchanged(_coinIn, _amount, amountReceived);
     }
@@ -252,10 +237,14 @@ contract LiquidityOps is Ownable {
         emit Locked(liquidity);
     }
 
-    function addLiquidity(uint256 _amount) private {
-        // Add same amounts of lp and xlp tokens
-        // such that the price remains about the same - don't apply any peg fixing here.
-        
+    /** 
+      * @notice Add LP/xLP 1:1 into the curve pool
+      * @dev Add same amounts of lp and xlp tokens such that the price remains about the same
+             - don't apply any peg fixing here. xLP tokens are minted 1:1
+      * @param _amount The amount of LP and xLP to add into the pool.
+      * @param _minCurveAmountOut The minimum amount of curve liquidity tokens we expect in return.
+      */
+    function addLiquidity(uint256 _amount, uint256 _minCurveAmountOut) private {
         uint256[2] memory amounts = [_amount, _amount];
         
         // Mint the new xLP. same as lp amount
@@ -264,12 +253,7 @@ contract LiquidityOps is Ownable {
         lpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
         xlpToken.safeIncreaseAllowance(address(curveStableSwap), _amount);
 
-        // The min token amount we're willing to accept
-        // Takes into consideration a acceptable slippage + the curve pool fee
-        uint256 tolerancePct = CURVE_FEE_DENOMINATOR - curveLiquiditySlippage - curveStableSwap.fee();
-        uint256 minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true) * tolerancePct / CURVE_FEE_DENOMINATOR;
-        uint256 liquidity = curveStableSwap.add_liquidity(amounts, minCurveTokenAmount, address(this));
-
+        uint256 liquidity = curveStableSwap.add_liquidity(amounts, _minCurveAmountOut, address(this));
         emit LiquidityAdded(_amount, _amount, liquidity);
     }
 
@@ -283,7 +267,7 @@ contract LiquidityOps is Ownable {
 
         uint256 receivedXlpAmount;
         uint256 receivedLpAmount;
-        if (curveStableSwap0IsXlpToken) {
+        if (staxReceiptTokenIndex == 0) {
             uint256[2] memory balances = curveStableSwap.remove_liquidity(_liquidity, [_xlpAmountMin, _lpAmountMin]);
             receivedXlpAmount = balances[0];
             receivedLpAmount = balances[1];
@@ -292,33 +276,62 @@ contract LiquidityOps is Ownable {
             receivedXlpAmount = balances[1];
             receivedLpAmount = balances[0];
         }
-        
+
         emit LiquidityRemoved(receivedLpAmount, receivedXlpAmount, _liquidity);
     }
 
-    function applyLiquidity() external {
-        uint256 availableLiquidity = lpToken.balanceOf(address(this));
-        require(availableLiquidity > 0, "not enough liquidity");
-        uint256 lockAmount = _getLockAmount(availableLiquidity);
+    /**
+      * @notice Calculate the amounts of liquidity to lock in the gauge vs add into the curve pool, based on lockRate policy.
+      */
+    function applyLiquidityAmounts(uint256 _liquidity) private view returns (uint256 lockAmount, uint256 addLiquidityAmount) {
+        lockAmount = (_liquidity * lockRate.numerator) / lockRate.denominator;
+        unchecked {
+            addLiquidityAmount = _liquidity - lockAmount;
+        }
+    }
+
+    /** 
+      * @notice Calculates the min expected amount of curve liquditity token to receive when depositing the 
+      *         current eligable amount to into the curve LP:xLP liquidity pool
+      * @dev Takes into account pool liquidity slippage and fees.
+      * @param _liquidity The amount of LP to apply
+      * @param _modelSlippage Any extra slippage to account for, given curveStableSwap.calc_token_amount() 
+               is an approximation. 1e10 precision, so 1% = 1e8.
+      * @return minCurveTokenAmount Expected amount of LP tokens received 
+      */ 
+    function minCurveLiquidityAmountOut(uint256 _liquidity, uint256 _modelSlippage) external view returns (uint256 minCurveTokenAmount) {
+        require(_modelSlippage <= CURVE_FEE_DENOMINATOR, "invalid percentage");
+        (, uint256 addLiquidityAmount) = applyLiquidityAmounts(_liquidity);
+        
+        minCurveTokenAmount = 0;
+        if (addLiquidityAmount > 0) {
+            uint256[2] memory amounts = [addLiquidityAmount, addLiquidityAmount];
+            minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true);
+            unchecked {
+                minCurveTokenAmount -= minCurveTokenAmount * (_modelSlippage + curveStableSwap.fee()) / CURVE_FEE_DENOMINATOR;
+            }
+        }
+    }
+
+    /** 
+      * @notice Apply LP held by this contract - locking into the gauge and adding to the curve liquidity pool
+      * @dev The ratio of gauge vs liquidity pool is goverend by the lockRate percentage, set by policy.
+      * @param _liquidity The amount of LP to apply.
+      * @param _minCurveTokenAmount When adding liquidity to the pool, what is the minimum number of tokens
+      *        to accept.
+      */
+    function applyLiquidity(uint256 _liquidity, uint256 _minCurveTokenAmount) external {
+        require(_liquidity <= lpToken.balanceOf(address(this)), "not enough liquidity");
+        (uint256 lockAmount, uint256 addLiquidityAmount) = applyLiquidityAmounts(_liquidity);
 
         // Policy may be set to put all in gauge, or all as new curve liquidity
         if (lockAmount > 0) {
             lockInGauge(lockAmount);
         }
 
-        uint256 addLiquidityAmount;
-        unchecked {
-            addLiquidityAmount = availableLiquidity - lockAmount;
-        }
-
         if (addLiquidityAmount > 0) {
-            addLiquidity(addLiquidityAmount);
+            addLiquidity(addLiquidityAmount, _minCurveTokenAmount);
         }
-    }
-
-    // get amount to lock based on lock rate
-    function _getLockAmount(uint256 _amount) internal view returns (uint256) {
-        return (_amount * lockRate.numerator) / lockRate.denominator;
     }
 
     // withdrawAndRelock is called to withdraw expired locks and relock into the most recent
