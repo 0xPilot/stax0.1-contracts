@@ -188,6 +188,7 @@ describe("Locker Proxy", async () => {
             await staxLPToken.connect(templeMultisig).approve(curvePool.address, 20000);
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress());
+            expect(await curvePool.get_virtual_price()).to.gt(ethers.utils.parseEther("1"));
             const balancesBefore = await curvePool.get_balances();
 
             const ammQuote = await locker.buyFromAmmQuote(100);
@@ -217,6 +218,7 @@ describe("Locker Proxy", async () => {
             await staxLPToken.connect(templeMultisig).approve(curvePool.address, 20000);
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
             await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress());
+            expect(await curvePool.get_virtual_price()).to.gt(ethers.utils.parseEther("1"));
 
             const ammQuote = await locker.buyFromAmmQuote(100);
             await expect(locker.connect(alan).buyFromAmm(100, true, ammQuote))

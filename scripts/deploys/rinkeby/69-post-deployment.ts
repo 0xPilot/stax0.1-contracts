@@ -88,6 +88,11 @@ async function addMinters(DEPLOYED: DeployedContracts, owner: Signer) {
   const staxlp = StaxLP__factory.connect(DEPLOYED.STAX_TOKEN, owner);
   await mine(staxlp.addMinter(DEPLOYED.LOCKER_PROXY));
   await mine(staxlp.addMinter(DEPLOYED.LIQUIDITY_OPS));
+
+  // get admin role and transferOwnership to multisig
+  const adminRole = await staxlp.getRoleAdmin(await staxlp.CAN_MINT());
+  await mine(staxlp.grantRole(adminRole, DEPLOYED.MULTISIG));
+  await mine(staxlp.transferOwnership(DEPLOYED.MULTISIG));
 }
 
 async function createVeFxsLock(DEPLOYED: DeployedContracts, owner: Signer) {
