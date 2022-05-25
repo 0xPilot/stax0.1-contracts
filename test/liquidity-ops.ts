@@ -134,7 +134,7 @@ describe("Liquidity Ops", async () => {
     });
 
     describe("Liquidity", async () => {
-        it.only("admin tests", async () => {
+        it("admin tests", async () => {
             await shouldThrow(liquidityOps.connect(alan).setPegDefender(await frank.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
