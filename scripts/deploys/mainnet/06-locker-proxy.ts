@@ -18,7 +18,8 @@ async function main() {
     DEPLOYED.LIQUIDITY_OPS,  // liquidity ops
     DEPLOYED.TEMPLE_V2_PAIR, // lp token
     DEPLOYED.STAX_TOKEN,     // xlp token
-    DEPLOYED.STAX_STAKING    // staking
+    DEPLOYED.STAX_STAKING,   // staking
+    DEPLOYED.CURVE_POOL      // For buying xlp on the AMM
   )
 }
 

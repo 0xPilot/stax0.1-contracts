@@ -300,7 +300,8 @@ contract LiquidityOps is Ownable {
       * @return minCurveTokenAmount Expected amount of LP tokens received 
       */ 
     function minCurveLiquidityAmountOut(uint256 _liquidity, uint256 _modelSlippage) external view returns (uint256 minCurveTokenAmount) {
-        require(_modelSlippage <= CURVE_FEE_DENOMINATOR, "invalid percentage");
+        uint256 feeAndSlippage = _modelSlippage + curveStableSwap.fee();
+        require(feeAndSlippage <= CURVE_FEE_DENOMINATOR, "invalid slippage");
         (, uint256 addLiquidityAmount) = applyLiquidityAmounts(_liquidity);
         
         minCurveTokenAmount = 0;
@@ -308,7 +309,7 @@ contract LiquidityOps is Ownable {
             uint256[2] memory amounts = [addLiquidityAmount, addLiquidityAmount];
             minCurveTokenAmount = curveStableSwap.calc_token_amount(amounts, true);
             unchecked {
-                minCurveTokenAmount -= minCurveTokenAmount * (_modelSlippage + curveStableSwap.fee()) / CURVE_FEE_DENOMINATOR;
+                minCurveTokenAmount -= minCurveTokenAmount * feeAndSlippage / CURVE_FEE_DENOMINATOR;
             }
         }
     }

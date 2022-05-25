@@ -41,7 +41,7 @@ async function main() {
   const curvePoolStub: CurvePoolStub = await deployAndMine(
     'CurvePoolStub', curvePoolStubFactory, curvePoolStubFactory.deploy,
     "Stax Frax/Temple xLP + LP",
-    "xFraxTemple+FraxTempleLP",
+    "xFraxTplLP",  // Note: The symbol has to be <= 10 chars
     [DEPLOYED.STAX_TOKEN, DEPLOYED.TEMPLE_V2_PAIR],
     rateMultipliers,
     A,

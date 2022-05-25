@@ -12,7 +12,6 @@ import {
     LiquidityOps, LiquidityOps__factory,
     LockerProxy, LockerProxy__factory,
     CurvePool,
-    StaxLockerReceiptRouter, StaxLockerReceiptRouter__factory,
     TempleUniswapV2Pair, FraxUnifiedFarmERC20
 } from "../typechain";
 import { lpBigHolderAddress, fraxMultisigAddress, templeMultisigAddress, 
@@ -39,7 +38,6 @@ describe("Liquidity Ops", async () => {
     let curvePool: CurvePool;
     let liquidityOps: LiquidityOps;
     let locker: LockerProxy;
-    let receiptRouter: StaxLockerReceiptRouter;
     const curveSlippage: BigNumberish = 5e7;  // 0.5%
 
     before( async () => {
@@ -88,15 +86,13 @@ describe("Liquidity Ops", async () => {
         }
 
         curvePool = await createCurveStableSwap(owner, staxLPToken, v2pair, templeMultisig);
-        receiptRouter = await new StaxLockerReceiptRouter__factory(owner).deploy(
-            v2pair.address, staxLPToken.address, curvePool.address);
-        await staxLPToken.addMinter(receiptRouter.address);
 
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
             curvePool.address, rewardsManager.address, await feeCollector.getAddress());
             
         locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, 
-            staxLPToken.address, staking.address, receiptRouter.address);
+            staxLPToken.address, staking.address, curvePool.address);
+        await staxLPToken.addMinter(locker.address);
 
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
@@ -138,7 +134,7 @@ describe("Liquidity Ops", async () => {
     });
 
     describe("Liquidity", async () => {
-        it("admin tests", async () => {
+        it.only("admin tests", async () => {
             await shouldThrow(liquidityOps.connect(alan).setPegDefender(await frank.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLPFarm(lpFarm.address), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setLockParams(80, 100), /Ownable: caller is not the owner/);
@@ -154,6 +150,9 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).removeLiquidityImbalance([10, 1], 100), /not defender/);
             await shouldThrow(liquidityOps.connect(alan).exchange(v2pair.address, 100, 100), /not defender/);
 
+            await shouldThrow(liquidityOps.minCurveLiquidityAmountOut(100, 1e10), /invalid slippage/);
+            await shouldThrow(liquidityOps.minCurveLiquidityAmountOut(100, 99961e6), /invalid slippage/);  // Fee = 0.04%, so total is 100.01%
+
             // happy paths
             await liquidityOps.setPegDefender(await frank.getAddress());
             await liquidityOps.setLPFarm(lpFarm.address);
@@ -164,6 +163,7 @@ describe("Liquidity Ops", async () => {
 
             await lpFarm.connect(validProxy).proxyToggleStaker(liquidityOps.address);
             await liquidityOps.setVeFXSProxy(await validProxy.getAddress());
+            await liquidityOps.minCurveLiquidityAmountOut(100, 9996e6);  // Fee = 0.04%, so total == 100%
 
             await shouldThrow(liquidityOps.connect(frank).removeLiquidity(100, 0, 0), /not enough tokens/);
             await shouldThrow(liquidityOps.applyLiquidity(100, 100), /not enough liquidity/);
@@ -211,7 +211,7 @@ describe("Liquidity Ops", async () => {
         });
 
         it("should toggle migrator for migration", async () => {
-            await liquidityOps.stakerToggleMigrator(await owner.getAddress(), {gasLimit: 500000});
+            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("should set reward tokens", async() => {
@@ -245,14 +245,13 @@ describe("Liquidity Ops", async () => {
             await staxLPToken.addMinter(liquidityOps.address);
 
             // Get some LP into the liquidity ops.
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});            
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
 
             // Apply the liquidity to the gauge/curve pool
             // 0% slippage, and expect 1 more than what's possible to receive such that slippage screws us
             const minCurveAmountOut = (await liquidityOps.minCurveLiquidityAmountOut(100, 0)).add(1);
-            await shouldThrow(liquidityOps.applyLiquidity(100, minCurveAmountOut, {gasLimit:900000}), /Slippage screwed you/);
+            await shouldThrow(liquidityOps.applyLiquidity(100, minCurveAmountOut), /Slippage screwed you/);
         });
 
         it("should lock rightly", async() => {
@@ -262,27 +261,26 @@ describe("Liquidity Ops", async () => {
             await staxLPToken.addMinter(liquidityOps.address);
 
             // Get some LP into the liquidity ops.
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});            
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(100);
 
-            const balancesBefore = await curvePool.get_balances({gasLimit:50000});
+            const balancesBefore = await curvePool.get_balances();
             expect(balancesBefore[0]).eq(9000);
             expect(balancesBefore[1]).eq(9000);
 
             // Apply the liquidity to the gauge/curve pool
             const virtualPriceBefore = await curvePool.get_virtual_price();
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
-            await expect(liquidityOps.applyLiquidity(100, minCurveAmountOut, {gasLimit:900000}))
+            await expect(liquidityOps.applyLiquidity(100, minCurveAmountOut))
                 .to.emit(liquidityOps, "Locked")
                 .withArgs(0.8*100)
-                .to.emit(liquidityOps, "LiquidityAdded")
-                .withArgs(0.2*100, 0.2*100, 40);
+                // .to.emit(liquidityOps, "LiquidityAdded")   // Waffle version 3.4.4 can't chain emit's
+                // .withArgs(0.2*100, 0.2*100, 40);
 
             const virtualPriceAfter = await curvePool.get_virtual_price();
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
-            const balancesAfter = await curvePool.get_balances({gasLimit:50000});
+            const balancesAfter = await curvePool.get_balances();
             expect(balancesAfter[0]).eq(9020);
             expect(balancesAfter[1]).eq(9020);
 
@@ -294,8 +292,7 @@ describe("Liquidity Ops", async () => {
             expect(lockedStake.liquidity).eq(0.8*100);  // From the first lock of 100, 80% of the LP is locked in the lpFarm
 
             // case next lock
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(50);
-            await locker.connect(alan).lock(50, false, ammQuote2, {gasLimit: 500000});
+            await locker.connect(alan).lock(50, false);
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(50);
             const minCurveAmountOut2 = await liquidityOps.minCurveLiquidityAmountOut(50, curveSlippage);
             await liquidityOps.applyLiquidity(50, minCurveAmountOut2);
@@ -308,8 +305,7 @@ describe("Liquidity Ops", async () => {
             await mineForwardSeconds(7 * 86400);
 
             // try to lock in old kek_id, should create new lock
-            const ammQuote3 = await locker.buyStaxLockerReceiptQuote(50);
-            await locker.connect(alan).lock(50, false, ammQuote3, {gasLimit: 500000});
+            await locker.connect(alan).lock(50, false);
             const minCurveAmountOut3 = await liquidityOps.minCurveLiquidityAmountOut(50, curveSlippage);
             await liquidityOps.applyLiquidity(50, minCurveAmountOut3);
 
@@ -325,9 +321,8 @@ describe("Liquidity Ops", async () => {
             const staxLPSupplyBefore = (await staxLPToken.totalSupply()).toNumber();
 
             // Alan locks 100 LP
-            await v2pair.connect(alan).approve(receiptRouter.address, 150);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            expect(await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000}));
+            await v2pair.connect(alan).approve(locker.address, 150);
+            expect(await locker.connect(alan).lock(100, false));
 
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
             await expect(liquidityOps.applyLiquidity(100, minCurveAmountOut))
@@ -343,16 +338,14 @@ describe("Liquidity Ops", async () => {
             const staxLPSupplyBefore2 = (await staxLPToken.totalSupply()).toNumber();
 
             // Alan locks another 50 LP
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(50);
-            expect(await locker.connect(alan).lock(50, false, ammQuote2, {gasLimit: 500000}));
+            expect(await locker.connect(alan).lock(50, false));
 
             // send Frank some lp tokens
             await v2pair.connect(templeMultisig).transfer(await frank.getAddress(), 100);
 
             // Frank locks 100 LP
-            await v2pair.connect(frank).approve(receiptRouter.address, 100);
-            const ammQuote3 = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(frank).lock(100, false, ammQuote3, {gasLimit: 500000});
+            await v2pair.connect(frank).approve(locker.address, 100);
+            await locker.connect(frank).lock(100, false);
 
             // 80% of LP into the lpFarm and equiv xLP minted, 20% remains as LP in the locker.
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(150);
@@ -382,25 +375,24 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setPegDefender(await frank.getAddress());
 
             // Get some LP into the liquidity ops.
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
 
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
             await liquidityOps.applyLiquidity(100, minCurveAmountOut);
 
-            const liquidityBefore = await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000});
+            const liquidityBefore = await curvePool.balanceOf(liquidityOps.address);
             // calculate amount of each token in lp to receive
             // value = old_balance * _burn_amount / total_supply
-            const balanceCoin0 = await curvePool.balances(0, {gasLimit: 200000});
-            const balanceCoin1 = await curvePool.balances(1, {gasLimit: 200000});
-            const totalSupply = await curvePool.totalSupply({gasLimit: 200000});
+            const balanceCoin0 = await curvePool.balances(0);
+            const balanceCoin1 = await curvePool.balances(1);
+            const totalSupply = await curvePool.totalSupply();
             const amount0 = balanceCoin0.mul(10).div(totalSupply);
             const amount1 = balanceCoin1.mul(10).div(totalSupply);
-            await expect(liquidityOps.connect(frank).removeLiquidity(10, 0, 0, {gasLimit: 200000}))
+            await expect(liquidityOps.connect(frank).removeLiquidity(10, 0, 0))
                 .to.emit(liquidityOps, "LiquidityRemoved")
                 .withArgs(amount1, amount0, 10);
-            expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.eq(liquidityBefore.sub(10));
+            expect(await curvePool.balanceOf(liquidityOps.address)).to.eq(liquidityBefore.sub(10));
         });
 
         it("removes liquidity imbalance", async () => {
@@ -411,20 +403,19 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setPegDefender(await frank.getAddress());
 
             // Get some LP into the liquidity ops.
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
 
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
             await liquidityOps.applyLiquidity(100, minCurveAmountOut);
 
-            const liquidityBefore = await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000});
+            const liquidityBefore = await curvePool.balanceOf(liquidityOps.address);
             
             const lpBalBefore = await v2pair.balanceOf(liquidityOps.address);
             const xlpBalBefore = await staxLPToken.balanceOf(liquidityOps.address);
-            await expect(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], liquidityBefore, {gasLimit: 200000}))
+            await expect(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], liquidityBefore))
                 .to.emit(liquidityOps, "RemovedLiquidityImbalance");
-            expect(await curvePool.balanceOf(liquidityOps.address, {gasLimit: 200000})).to.lt(liquidityBefore);
+            expect(await curvePool.balanceOf(liquidityOps.address)).to.lt(liquidityBefore);
             expect(await v2pair.balanceOf(liquidityOps.address)).to.eq(lpBalBefore.add(BigNumber.from(1)));
             expect(await staxLPToken.balanceOf(liquidityOps.address)).to.eq(xlpBalBefore.add(10));
         });
@@ -432,11 +423,10 @@ describe("Liquidity Ops", async () => {
         it("should withdraw and relock", async() => {
             // lock
             await liquidityOps.setLockParams(80, 100);
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
+            await v2pair.connect(alan).approve(locker.address, 300);
             await staxLPToken.addMinter(liquidityOps.address);
             await staxLPToken.addMinter(locker.address);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});
+            await locker.connect(alan).lock(100, false);
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
@@ -467,8 +457,7 @@ describe("Liquidity Ops", async () => {
             expect(newLockedStakes[0].lock_multiplier).to.eq(0);
 
             // lock, fast forward and relock again to ensure only one active lock
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(50);
-            await locker.connect(alan).lock(50, false, ammQuote2, {gasLimit: 500000});
+            await locker.connect(alan).lock(50, false);
             const minCurveAmountOut2 = await liquidityOps.minCurveLiquidityAmountOut(50, curveSlippage);
             await liquidityOps.applyLiquidity(50, minCurveAmountOut2);
             await mineForwardSeconds(8 * 86400);
@@ -493,9 +482,8 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setPegDefender(await frank.getAddress());
 
             // Get some LP into the liquidity ops.
-            await v2pair.connect(alan).approve(receiptRouter.address, 300);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
 
             // lock and add liquidity
             const virtualPriceBefore = await curvePool.get_virtual_price();
@@ -520,22 +508,21 @@ describe("Liquidity Ops", async () => {
             expect(expected).lt(idealAmountAfterFee);
             // calculate how much of y needed to bring balances of coins close
             // note: difference in balances doesn't always mean peg is off
-            const balance0 = await curvePool.balances(0, {gasLimit: 100000});
-            const balance1 = await curvePool.balances(1, {gasLimit: 100000});
+            const balance0 = await curvePool.balances(0);
+            const balance1 = await curvePool.balances(1);
             const balanceDiff = balance0.sub(balance1);
             const toExchange = balanceDiff.div(2);
 
             // lock more to introduce some lp in liquidity ops
-            await v2pair.connect(alan).approve(receiptRouter.address, toExchange);
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(toExchange);
-            await locker.connect(alan).lock(toExchange, false, ammQuote2, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, toExchange);
+            await locker.connect(alan).lock(toExchange, false);
             
             const amountToReceive = await curvePool.get_dy(1, 0, toExchange);
             await expect(liquidityOps.connect(frank).exchange(v2pair.address, toExchange, amountToReceive))
                 .to.emit(liquidityOps, "CoinExchanged")
                 .withArgs(v2pair.address, toExchange, amountToReceive);
-            const balance0After = await curvePool.balances(0, {gasLimit: 100000});
-            const balance1After = await curvePool.balances(1, {gasLimit: 100000});
+            const balance0After = await curvePool.balances(0);
+            const balance1After = await curvePool.balances(1);
             expect(Math.abs(balance0After.sub(balance1After).toNumber())).to.lt(2);
         });
     });
@@ -551,9 +538,8 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setRewardsManager(rewardsManager.address);
             await liquidityOps.setFeeCollector(await feeCollector.getAddress());
        
-            await v2pair.connect(alan).approve(receiptRouter.address, 10000);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(10000);
-            await locker.connect(alan).lock(10000, false, ammQuote, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, 10000);
+            await locker.connect(alan).lock(10000, false);
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(10000, curveSlippage);
             await liquidityOps.applyLiquidity(10000, minCurveAmountOut);
         });

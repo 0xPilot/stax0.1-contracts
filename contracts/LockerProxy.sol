@@ -5,28 +5,41 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface IStaxLockerReceiptRouter {
-    function buyStaxLockerReceipt(address _inputFromAddr, address _inputToAddr, uint256 _inputAmount, uint256 _minAmmAmountOut, address _receiptToAddr) external returns (uint256 totalAmount, uint256 protocolMintedAmount);
-    function buyStaxLockerReceiptQuote(uint256 _inputAmount) external view returns (uint256 _staxReceiptAmount);
-}
+import "hardhat/console.sol";
 
-interface IStaxLPStaking {
+interface IStaxStaking {
     function stakeFor(address _for, uint256 _amount) external;
 }
 
-contract LockerProxy is Ownable {
+/// @dev The stax liquidity token - eg xLP, xFXS.
+interface IStaxLockerReceipt is IERC20 {
+    function mint(address to, uint256 amount) external;
+}
 
+/// @dev interface of the curve stable swap.
+interface IStableSwap {
+    function coins(uint256 j) external view returns (address);
+    function get_dy(int128 _from, int128 _to, uint256 _from_amount) external view returns (uint256);
+    function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy, address receiver) external returns (uint256);
+}
+
+contract LockerProxy is Ownable {
+    using SafeERC20 for IStaxLockerReceipt;
     using SafeERC20 for IERC20;
 
     address public liquidityOps;
     IERC20 public inputToken; // eg TEMPLE/FRAX LP, FXS token
-    IERC20 public staxReceiptToken; // eg xLP, xFXS token
-    IStaxLPStaking public staking; // staking contract for xLP, xFXS
+    IStaxLockerReceipt public staxReceiptToken; // eg xLP, xFXS token
+    IStaxStaking public staking; // staking contract, eg to stake xLP, xFXS
 
-    // Router to buy/mint the Stax Locker Receipt Token (eg xLP, xFXS)
-    IStaxLockerReceiptRouter public lockerReceiptRouter;
+    IStableSwap public curveStableSwap; // Curve pool for (xlp, lp) pair.
 
-    event Locked(address user, uint256 totalLocked, uint256 protocolMinted, uint256 boughtOnAmm);
+     // The order of curve pool tokens
+    int128 public inputTokenIndex;
+    int128 public staxReceiptTokenIndex;
+
+    event Locked(address user, uint256 amountOut);
+    event Bought(address user, uint256 amountOut);
     event LiquidityOpsSet(address liquidityOps);
     event TokenRecovered(address user, uint256 amount);
 
@@ -35,20 +48,44 @@ contract LockerProxy is Ownable {
         address _inputToken,
         address _staxReceiptToken,
         address _staking,
-        address _lockerReceiptRouter
+        address _curveStableSwap
     ) {
         liquidityOps = _liquidityOps;
         inputToken = IERC20(_inputToken);
-        staxReceiptToken = IERC20(_staxReceiptToken);
-        staking = IStaxLPStaking(_staking);
+        staxReceiptToken = IStaxLockerReceipt(_staxReceiptToken);
+        staking = IStaxStaking(_staking);
 
-        lockerReceiptRouter = IStaxLockerReceiptRouter(_lockerReceiptRouter);
+        curveStableSwap = IStableSwap(_curveStableSwap);
+        (staxReceiptTokenIndex, inputTokenIndex) = curveStableSwap.coins(0) == address(staxReceiptToken)
+            ? (int128(0), int128(1))
+            : (int128(1), int128(0));
     }
 
     function setLiquidityOps(address _liquidityOps) external onlyOwner {
         require(_liquidityOps != address(0), "invalid address");
         liquidityOps = _liquidityOps;
         emit LiquidityOpsSet(_liquidityOps);
+    }
+
+    /** 
+      * @notice Convert inputToken (eg LP) to staxReceiptToken (eg xLP), at 1:1
+      * @dev This will mint staxReceiptToken (1:1)
+      * @param _inputAmount How much of inputToken to lock (eg LP)
+      * @param _stake If true, immediately stake the resulting staxReceiptToken (eg xLP)
+      */
+    function lock(uint256 _inputAmount, bool _stake) external {
+        require(_inputAmount <= inputToken.balanceOf(msg.sender), "not enough tokens");
+
+        inputToken.safeTransferFrom(msg.sender, liquidityOps, _inputAmount);
+        if (_stake) {
+            staxReceiptToken.mint(address(this), _inputAmount);
+            staxReceiptToken.safeIncreaseAllowance(address(staking), _inputAmount);
+            staking.stakeFor(msg.sender, _inputAmount);
+        } else {
+            staxReceiptToken.mint(msg.sender, _inputAmount);
+        }
+
+        emit Locked(msg.sender, _inputAmount);
     }
     
     /** 
@@ -57,32 +94,34 @@ contract LockerProxy is Ownable {
       * @param _liquidity The amount of inputToken (eg LP)
       * @return _staxReceiptAmount The expected amount of _staxReceiptAmount from the AMM
       */
-    function buyStaxLockerReceiptQuote(uint256 _liquidity) external view returns (uint256 _staxReceiptAmount) {
-        return lockerReceiptRouter.buyStaxLockerReceiptQuote(_liquidity);
+    function buyFromAmmQuote(uint256 _liquidity) external view returns (uint256 _staxReceiptAmount) {
+        return curveStableSwap.get_dy(inputTokenIndex, staxReceiptTokenIndex, _liquidity);
     }
 
     /** 
-      * @notice Lock inputToken (eg LP) and return staxReceiptToken (eg xLP), at least 1:1
-      * @dev This will either mint staxReceiptToken (1:1), or purchase staxReceiptToken from the AMM if it's trading at > 1:1
-      * @param _liquidity How much of inputToken to lock (eg LP)
-      * @param _stake Immediately stake the resulting staxReceiptToken (eg xLP)
-      * @param _minAmmAmountOut The minimum amount of staxReceiptToken (eg xLP) to expect if purchased off the AMM. 
-               Use buyStaxLockerReceiptQuote() to get an AMM quote.
+      * @notice Purchase stax locker receipt tokens (eg xLP), by buying from the AMM.
+      * @dev Use this instead of convert() if the receipt token is trading > 1:1 - eg you can get more xLP buying on the AMM 
+      * @param _inputAmount How much of inputToken to lock (eg LP)
+      * @param _stake If true, immediately stake the resulting staxReceiptToken (eg xLP)
+      * @param _minAmmAmountOut The minimum amount we would expect to receive from the AMM
       */
-    function lock(uint256 _liquidity, bool _stake, uint256 _minAmmAmountOut) external {
-        require(_liquidity <= inputToken.balanceOf(address(msg.sender)), "not enough liquidity");
+    function buyFromAmm(uint256 _inputAmount, bool _stake, uint256 _minAmmAmountOut) external {
+        require(_inputAmount <= inputToken.balanceOf(msg.sender), "not enough tokens");
 
-        uint256 totalReceiptToken;
-        uint256 mintedReceiptToken;
+        // Pull input tokens and give allowance for AMM to pull.
+        inputToken.safeTransferFrom(msg.sender, address(this), _inputAmount);
+        inputToken.safeIncreaseAllowance(address(curveStableSwap), _inputAmount);
+
+        uint256 amountOut;
         if (_stake) {
-            (totalReceiptToken, mintedReceiptToken) = lockerReceiptRouter.buyStaxLockerReceipt(msg.sender, liquidityOps, _liquidity, _minAmmAmountOut, address(this));
-            staxReceiptToken.safeIncreaseAllowance(address(staking), totalReceiptToken);
-            staking.stakeFor(msg.sender, totalReceiptToken);
+            amountOut = curveStableSwap.exchange(inputTokenIndex, staxReceiptTokenIndex, _inputAmount, _minAmmAmountOut, address(this));
+            staxReceiptToken.safeIncreaseAllowance(address(staking), amountOut);
+            staking.stakeFor(msg.sender, amountOut);
         } else {
-            (totalReceiptToken, mintedReceiptToken) = lockerReceiptRouter.buyStaxLockerReceipt(msg.sender, liquidityOps, _liquidity, _minAmmAmountOut, msg.sender);
+            amountOut = curveStableSwap.exchange(inputTokenIndex, staxReceiptTokenIndex, _inputAmount, _minAmmAmountOut, msg.sender);
         }
 
-        emit Locked(msg.sender, totalReceiptToken, mintedReceiptToken, totalReceiptToken-mintedReceiptToken);
+        emit Bought(msg.sender, amountOut);
     }
 
     // recover tokens

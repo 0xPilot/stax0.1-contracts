@@ -28,7 +28,8 @@ async function main() {
     DEPLOYED.LIQUIDITY_OPS, 
     DEPLOYED.TEMPLE_V2_PAIR, // lp token
     DEPLOYED.STAX_TOKEN,
-    DEPLOYED.STAX_STAKING
+    DEPLOYED.STAX_STAKING,
+    DEPLOYED.CURVE_POOL
   );
 
   await mine(lockerProxy.transferOwnership(DEPLOYED.MULTISIG));

@@ -30,7 +30,13 @@ async function main() {
 
   await mine(staxLP.addMinter(DEPLOYED.MULTISIG));
   await mine(staxLP.addMinter(await owner.getAddress()));
+
+  // Transfer xLP ownership to the multisig
+  // Grant the msig the admin role (so it can then add/remove minters), and remove admin from the old owner.
+  const adminRole = await staxLP.getRoleAdmin(await staxLP.CAN_MINT());
+  await mine(staxLP.grantRole(adminRole, DEPLOYED.MULTISIG));
   await mine(staxLP.transferOwnership(DEPLOYED.MULTISIG));
+  await mine(staxLP.revokeRole(adminRole, await owner.getAddress()));
 }
 
 // We recommend this pattern to be able to use async/await everywhere

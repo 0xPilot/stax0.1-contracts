@@ -47,7 +47,7 @@ For testing, we depend on Vyper for Curve contracts. The generated typechain for
 https://github.com/dethcrypto/TypeChain/issues/677
 https://github.com/NomicFoundation/hardhat/issues/1696
 
-Normally gas shouldn't be explicitly added into the typechain ABI. It causes further issues in testing where `contract.fn(..., {gasLimit:50000})` has to be manually added as options to any write functions on the contract.
+Normally gas shouldn't be explicitly added into the typechain ABI.
 
 ## VSCode Testing
 

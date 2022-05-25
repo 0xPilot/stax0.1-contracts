@@ -13,7 +13,6 @@ import {
     LiquidityOps, LiquidityOps__factory,
     CurvePool, 
     TempleUniswapV2Pair, FraxUnifiedFarmERC20,
-    StaxLockerReceiptRouter, StaxLockerReceiptRouter__factory
 } from "../typechain";
 import { fraxMultisigAddress,
     fraxUnifiedFarmAddress, fxsTokenAddress,
@@ -39,7 +38,6 @@ describe("Staking", async () => {
     let staxLPToken: StaxLP;
     let liquidityOps: LiquidityOps;
     let curvePool: CurvePool;
-    let receiptRouter: StaxLockerReceiptRouter;
 
     const ONE_E_18 = BigNumber.from(10).pow(18);
 
@@ -91,12 +89,9 @@ describe("Staking", async () => {
         
         liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
             curvePool.address, rewardsManager.address, await owner.getAddress());
-        receiptRouter = await new StaxLockerReceiptRouter__factory(owner).deploy(
-            v2pair.address, staxLPToken.address, curvePool.address);
-        await staxLPToken.addMinter(receiptRouter.address);
-
         locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, 
-            staxLPToken.address, staking.address, receiptRouter.address);
+            staxLPToken.address, staking.address, curvePool.address);
+        await staxLPToken.addMinter(locker.address);
 
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
@@ -187,9 +182,8 @@ describe("Staking", async () => {
         async function testRewardCalcs(lockAndStakeAmount: BigNumber, fxsRewards: BigNumber, templeRewards: BigNumber) {
             // Give alan some LP, and lock it.
             await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), lockAndStakeAmount);
-            await v2pair.connect(alan).approve(receiptRouter.address, lockAndStakeAmount);
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(alan).lock(lockAndStakeAmount, false, ammQuote, {gasLimit: 500000});
+            await v2pair.connect(alan).approve(locker.address, lockAndStakeAmount);
+            await locker.connect(alan).lock(lockAndStakeAmount, false);
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(lockAndStakeAmount);
 
             // lock stake and add liquidity
@@ -260,9 +254,8 @@ describe("Staking", async () => {
             // Ben stakes some more to make things even more interesting.
             const lockAndStakeAmount2 = 20000000;
             await v2pair.connect(lpBigHolder).transfer(await ben.getAddress(), lockAndStakeAmount2);
-            await v2pair.connect(ben).approve(receiptRouter.address, lockAndStakeAmount2);
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(ben).lock(lockAndStakeAmount2, true, ammQuote2, {gasLimit: 500000});
+            await v2pair.connect(ben).approve(locker.address, lockAndStakeAmount2);
+            await locker.connect(ben).lock(lockAndStakeAmount2, true);
 
             // Staking above updated the reward data - check it matches expectations
             const fxsRewardData = await staking.rewardData(fxsToken.address);
@@ -371,7 +364,7 @@ describe("Staking", async () => {
             const lpAmount = await curvePool.get_dy(0, 1, alanXlpBal);
             await staxLPToken.connect(alan).approve(curvePool.address, alanXlpBal);
             await curvePool.connect(alan).functions["exchange(int128,int128,uint256,uint256,address)"]
-                (0, 1, alanXlpBal, lpAmount, await alan.getAddress(), {gasLimit: 1300000});
+                (0, 1, alanXlpBal, lpAmount, await alan.getAddress());
             expect(await v2pair.balanceOf(await alan.getAddress())).to.eq(lpAmount.add(alanLpBal));
         }
 

@@ -35,7 +35,7 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
   rinkeby: {
 
     // From network/environment
-    FRAX: '0x5eD8BD53B0c3fa3dEaBd345430B1A3a6A4e8BD7C',
+    FRAX: '0x5eD8BD53B0c3fa3dEaBd345430B1A3a6A4e8BD7C',  // Uses DAI as a proxy for TEMPLE (which we can mint)
     FXS: '0x10A8faD8367bd2598bf47A54F3394EE7Eec904B4',
     // Active contracts
     TEMPLE: '0x359655dcB8A32479680Af81Eb38eA3Bb2B42Af54',
@@ -44,7 +44,7 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     // currently not configured, need to swap treasury owner via
     // multisig. Test on rinkeby before doing the same on mainnet
     TREASURY_MANAGEMENT: '0xB9A7F07f5D0ea3AFa454486cffe39ceFec8e136C',
-    TEMPLE_V2_PAIR: '0x57fd5b0CcC0Ad528050a2D5e3b3935c08F058Dca',
+    TEMPLE_V2_PAIR: '0x57fd5b0CcC0Ad528050a2D5e3b3935c08F058Dca',  // TEMPLE/DAI as proxy for TEMPLE/FRAX
     TEMPLE_V2_ROUTER: '0xb50341AF85763d2D997F4ba764EbBdfAeeC0E07d',
 
     MULTISIG: '0x577BB87962b76e60d3d930c1B9Ddd6DFD64d24A2',
@@ -55,8 +55,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     REWARDS_MANAGER: '0xD9fa3457443b506e09acdc9ED2a7DfAaB67F03E3',
 
     // liqudity ops
-    LIQUIDITY_OPS: '0x4eC985ec661F30a6982244Ff4A53Ab559bEF3F87',
-    LOCKER_PROXY: '0xc776a9842bfa55998d29aa7DB1F96bA6A5Ee2A83', 
+    LIQUIDITY_OPS: '0x4C8920a72df40b65D5025b507287EAF2c3925C08',
+    LOCKER_PROXY: '0x2a54702c69c138C2a0c53c101c664C55F8D71AF5', 
 
     // FXS
     FXS_GAUGE_CONTROLLER: '0x370eB2c1747a087c1798440cb42C4dddd838b430',

@@ -31,7 +31,7 @@ export const createCurveStableSwap = async (owner: Signer, staxLPToken: StaxLP, 
         // The deploy_plain_pool doesn't get added to the object correctly from the ABI (perhaps because it's overloaded)
         // We need to call it by name
         await expect(curveFactory.functions['deploy_plain_pool(string,string,address[4],uint256,uint256,uint256,uint256)']
-            ("STAX TEMPLE/FRAX xLP + LP", "xTFLP+TFLP", coins, A, fee, assetType, implementationIndex, {gasLimit: 1000000}))
+            ("STAX TEMPLE/FRAX xLP + LP", "xTFLP+TFLP", coins, A, fee, assetType, implementationIndex))
             .to.emit(curveFactory, "PlainPoolDeployed")
             .withArgs(coins, A, fee, await owner.getAddress());
         
@@ -67,7 +67,7 @@ export const createCurveStableSwap = async (owner: Signer, staxLPToken: StaxLP, 
         expect(await v2pair.balanceOf(await templeMultisig.getAddress())).gte(seedBalances[1]);
 
         const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-        await addLiquidityFn(seedBalances, 0, await templeMultisig.getAddress(), {gasLimit: 300000});
+        await addLiquidityFn(seedBalances, 0, await templeMultisig.getAddress());
     }
 
     return curvePool;

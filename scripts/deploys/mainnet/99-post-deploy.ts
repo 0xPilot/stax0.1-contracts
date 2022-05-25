@@ -45,7 +45,6 @@ async function main() {
     await mine(rewardsManager.transferOwnership(DEPLOYED.MULTISIG));
 
     // Liquidity Ops initial policy / state
-    await mine(liquidityOps.setCurvePool0());
     await mine(liquidityOps.setRewardTokens());
     await mine(liquidityOps.setLockParams(80, 100)); // By default: 80% locked in the gauge, 20% in the curve pool
 

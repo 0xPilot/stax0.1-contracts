@@ -8,7 +8,6 @@ import {
     TempleUniswapV2Pair, TempleUniswapV2Pair__factory,
     StaxLPStaking, StaxLPStaking__factory,
     CurvePool, 
-    StaxLockerReceiptRouter, StaxLockerReceiptRouter__factory,
 } from "../typechain";
 import { 
     lpBigHolderAddress, lpTokenAddress, templeMultisigAddress
@@ -27,7 +26,6 @@ describe("Locker Proxy", async () => {
     let staking: StaxLPStaking;
     let curvePool: CurvePool;
     let templeMultisig: Signer;
-    let receiptRouter: StaxLockerReceiptRouter;
 
     before( async () => {
         await network.provider.request({
@@ -75,14 +73,11 @@ describe("Locker Proxy", async () => {
                 params: [lpBigHolderAddress],
             });
         }
-
+        
         curvePool = await createCurveStableSwap(owner, staxLPToken, v2pair, templeMultisig);
-        receiptRouter = await new StaxLockerReceiptRouter__factory(owner).deploy(
-            v2pair.address, staxLPToken.address, curvePool.address);
-        await staxLPToken.addMinter(receiptRouter.address);
-
         locker = await new LockerProxy__factory(owner).deploy(await liquidityOps.getAddress(), v2pair.address, 
-            staxLPToken.address, staking.address, receiptRouter.address);
+            staxLPToken.address, staking.address, curvePool.address);
+        await staxLPToken.addMinter(locker.address);
     });
 
     describe("Locking", async () => {
@@ -93,7 +88,7 @@ describe("Locker Proxy", async () => {
 
             await shouldThrow(locker.connect(alan).recoverToken(staxLPToken.address, await owner.getAddress(), 100), /Ownable: caller is not the owner/);
             await shouldThrow(locker.recoverToken(staxLPToken.address, await owner.getAddress(), 100), /not enough tokens/);
-            await shouldThrow(locker.connect(alan).lock(100, false, 100), /not enough liquidity/);
+            await shouldThrow(locker.connect(alan).lock(30000, false), /not enough tokens/);
 
             // Happy paths
             await expect(locker.setLiquidityOps(await alan.getAddress()))
@@ -101,16 +96,36 @@ describe("Locker Proxy", async () => {
                 .withArgs(await alan.getAddress());
         });
 
+        it("AMM Quote", async() => {
+            const lpAmount = 1000;           
+            
+            {
+                const dy = await curvePool.get_dy(1, 0, lpAmount);
+                const xlp = await locker.buyFromAmmQuote(lpAmount);
+                expect(xlp).eq(dy);
+            }
+
+            // distort virtual price by adding xLP only.
+            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 20000);
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
+            await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress());
+            
+            {
+                const dy = await curvePool.get_dy(1, 0, lpAmount);
+                const xlp = await locker.buyFromAmmQuote(lpAmount);
+                expect(xlp).eq(dy);
+            }
+        });
+
         it("should lock rightly", async() => {
             const xlpTotalSupplyBefore = await staxLPToken.totalSupply();
 
             // Alan locks 100 
-            await v2pair.connect(alan).approve(receiptRouter.address, 150);
+            await v2pair.connect(alan).approve(locker.address, 150);
             const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await expect(locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000}))
+            await expect(locker.connect(alan).lock(100, false))
                 .to.emit(locker, "Locked")
-                .withArgs(await alan.getAddress(), 100, 100, 0);
+                .withArgs(await alan.getAddress(), 100);
 
             // lp transferred to the liquidity manager
             expect(await v2pair.balanceOf(await alan.getAddress())).eq(alanLpBefore.sub(100));
@@ -120,14 +135,12 @@ describe("Locker Proxy", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(100);
 
             // Alan locks another 50
-            const ammQuote2 = await locker.buyStaxLockerReceiptQuote(50);
-            await locker.connect(alan).lock(50, false, ammQuote2, {gasLimit: 500000});
+            await locker.connect(alan).lock(50, false);
 
             // Ben locks 100
             const benLpBefore = await v2pair.balanceOf(await ben.getAddress());
-            await v2pair.connect(ben).approve(receiptRouter.address, 100);
-            const ammQuote3 = await locker.buyStaxLockerReceiptQuote(100);
-            await locker.connect(ben).lock(100, false, ammQuote3, {gasLimit: 500000});
+            await v2pair.connect(ben).approve(locker.address, 100);
+            await locker.connect(ben).lock(100, false);
 
             // Check total balances
             expect(await v2pair.balanceOf(await liquidityOps.getAddress())).eq(250);
@@ -141,15 +154,14 @@ describe("Locker Proxy", async () => {
 
         it("should lock and stake", async() => {
             // Alan locks and stakes 100 -- only 1 approval required.
-            await v2pair.connect(alan).approve(receiptRouter.address, 100);
+            await v2pair.connect(alan).approve(locker.address, 100);
 
             const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
             const liquidityOpsLpBefore = await v2pair.balanceOf(await liquidityOps.getAddress());
 
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await expect(locker.connect(alan).lock(100, true, ammQuote, {gasLimit: 500000}))
+            await expect(locker.connect(alan).lock(100, true))
                 .to.emit(locker, "Locked")
-                .withArgs(await alan.getAddress(), 100, 100, 0);
+                .withArgs(await alan.getAddress(), 100);
                 // .to.emit(staking, "Staked")    // Waffle version 3.4.4 can't chain emit's
                 // .withArgs(await alan.getAddress(), 100);
             
@@ -166,7 +178,7 @@ describe("Locker Proxy", async () => {
 
         it("should lock - buy from AMM > 1:1", async() => {
             // Alan locks and stakes 100 -- only 1 approval required.
-            await v2pair.connect(alan).approve(receiptRouter.address, 100);
+            await v2pair.connect(alan).approve(locker.address, 100);
 
             const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
             const alanXlpBefore = await staxLPToken.balanceOf(await alan.getAddress());
@@ -175,13 +187,13 @@ describe("Locker Proxy", async () => {
             // distort virtual price by adding xLP only.
             await staxLPToken.connect(templeMultisig).approve(curvePool.address, 20000);
             const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
-            await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress(), {gasLimit: 150000});
-            const balancesBefore = await curvePool.get_balances({gasLimit: 150000});
+            await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress());
+            const balancesBefore = await curvePool.get_balances();
 
-            const ammQuote = await locker.buyStaxLockerReceiptQuote(100);
-            await expect(locker.connect(alan).lock(100, false, ammQuote, {gasLimit: 500000}))
-                .to.emit(locker, "Locked")
-                .withArgs(await alan.getAddress(), ammQuote, 0, ammQuote);
+            const ammQuote = await locker.buyFromAmmQuote(100);
+            await expect(locker.connect(alan).buyFromAmm(100, false, ammQuote))
+                .to.emit(locker, "Bought")
+                .withArgs(await alan.getAddress(), ammQuote);
             
             // Check total balances
             expect(await v2pair.balanceOf(await liquidityOps.getAddress())).eq(liquidityOpsLpBefore);
@@ -189,14 +201,41 @@ describe("Locker Proxy", async () => {
             expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(alanXlpBefore.add(ammQuote));
 
             // The curve pool balances were updated
-            const balancesAfter = await curvePool.get_balances({gasLimit: 150000});
+            const balancesAfter = await curvePool.get_balances();
             expect(balancesAfter[0]).eq(balancesBefore[0].sub(ammQuote));
             expect(balancesAfter[1]).eq(balancesBefore[1].add(100));
         });
 
+        it("should lock and stake - buy from AMM > 1:1", async() => {
+            // Alan locks and stakes 100 -- only 1 approval required.
+            await v2pair.connect(alan).approve(locker.address, 100);
+
+            const alanLpBefore = await v2pair.balanceOf(await alan.getAddress());
+            const liquidityOpsLpBefore = await v2pair.balanceOf(await liquidityOps.getAddress());
+
+            // distort virtual price by adding xLP only.
+            await staxLPToken.connect(templeMultisig).approve(curvePool.address, 20000);
+            const addLiquidityFn = curvePool.connect(templeMultisig).functions['add_liquidity(uint256[2],uint256,address)'];
+            await addLiquidityFn([20000, 0], 1, await templeMultisig.getAddress());
+
+            const ammQuote = await locker.buyFromAmmQuote(100);
+            await expect(locker.connect(alan).buyFromAmm(100, true, ammQuote))
+                .to.emit(locker, "Bought")
+                .withArgs(await alan.getAddress(), ammQuote);
+
+            expect(await v2pair.balanceOf(await alan.getAddress())).eq(alanLpBefore.sub(100));
+            expect(await v2pair.balanceOf(await liquidityOps.getAddress())).eq(liquidityOpsLpBefore);
+
+            // Alan's xlp has been staked.
+            expect(await staxLPToken.balanceOf(await alan.getAddress())).eq(0);
+            expect(await staxLPToken.balanceOf(await liquidityOps.getAddress())).eq(0);
+            expect(await staking.balanceOf(await alan.getAddress())).eq(ammQuote);
+            expect(await staking.totalSupply()).eq(ammQuote);
+        });
+
         it("slippage screwed us when buying from AMM > 1:1", async() => {
-            await v2pair.connect(alan).approve(receiptRouter.address, 100);
-            await shouldThrow(locker.connect(alan).lock(100, false, 150, {gasLimit: 500000}), /Exchange resulted in fewer coins than expected/);
+            await v2pair.connect(alan).approve(locker.address, 100);
+            await shouldThrow(locker.connect(alan).buyFromAmm(100, false, 150), /Exchange resulted in fewer coins than expected/);
         });
 
         it("owner can recover tokens", async () => {

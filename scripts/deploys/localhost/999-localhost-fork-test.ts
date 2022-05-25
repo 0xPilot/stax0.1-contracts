@@ -60,7 +60,7 @@ async function main() {
   console.log("Fred xLP bal:", await staxlp.balanceOf(await fred.getAddress()));
   console.log("Fred LP bal:", await v2pair.balanceOf(await fred.getAddress()));
   
-  const curveBalancesBefore = await curvePool.get_balances({gasLimit: 50000});
+  const curveBalancesBefore = await curvePool.get_balances();
   console.log("Curve Pool balances:", curveBalancesBefore);
   
   // Seed the curve pool if empty
@@ -83,21 +83,32 @@ async function main() {
     await mine(staxlp.approve(curvePool.address, seedAmount));
     await mine(v2pair.approve(curvePool.address, seedAmount));
     const addLiquidityFn = curvePool.functions['add_liquidity(uint256[2],uint256,address)'];
-    await mine(addLiquidityFn([seedAmount, seedAmount], 0, await templeMultisig.getAddress(), {gasLimit: 900000}));
-    console.log("Curve Pool Balances:", await curvePool.get_balances({gasLimit: 50000}));
+    await mine(addLiquidityFn([seedAmount, seedAmount], 0, await templeMultisig.getAddress()));
+    console.log("Curve Pool Balances:", await curvePool.get_balances());
   }
 
   const fredLPBal = await v2pair.balanceOf(await fred.getAddress());
   if (fredLPBal.gt(0) && (await (v2pair.balanceOf(liquidityOps.address))).eq(0)) {
-    console.log("\nLocking LP for xLP");
-    await v2pair.connect(fred).approve(lockerProxy.address, fredLPBal);
-    await mine(lockerProxy.connect(fred).lock(fredLPBal, false));
+    const amountToLock = fredLPBal.sub(ethers.utils.parseEther("2"));
+    console.log("\nLocking LP for xLP:", amountToLock);
+    await v2pair.connect(fred).approve(lockerProxy.address, amountToLock);
+    await mine(lockerProxy.connect(fred).lock(amountToLock, false));
   }
 
-  console.log("\napplyLiquidity() for: ", await v2pair.balanceOf(liquidityOps.address));
-  await mine(liquidityOps.applyLiquidity({gasLimit: 900000}));
+  const v2PairBalance = await v2pair.balanceOf(liquidityOps.address);
+  console.log("\napplyLiquidity() for: ", v2PairBalance);
+  const minCurveAmountOut = (await liquidityOps.minCurveLiquidityAmountOut(v2PairBalance, 5e7));
+  await mine(liquidityOps.applyLiquidity(v2PairBalance, minCurveAmountOut));
   
-  console.log("Curve Pool balances:", await curvePool.get_balances({gasLimit: 50000}));
+  const fredLPBal2 = await v2pair.balanceOf(await fred.getAddress());
+  if (fredLPBal2.gt(0)) {
+    const ammQuote = await lockerProxy.buyFromAmmQuote(fredLPBal2);
+    await v2pair.connect(fred).approve(lockerProxy.address, fredLPBal2);
+    console.log("\nBuying xLP with LP:", fredLPBal2, ammQuote);
+    await mine(lockerProxy.connect(fred).buyFromAmm(fredLPBal2, false, ammQuote));
+  }
+
+  console.log("Curve Pool balances:", await curvePool.get_balances());
   console.log("liquidity ops xLP bal:", await staxlp.balanceOf(liquidityOps.address));
   console.log("liquidity ops LP bal:", await v2pair.balanceOf(liquidityOps.address));
   console.log("Fred xLP bal:", await staxlp.balanceOf(await fred.getAddress()));
