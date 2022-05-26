@@ -141,7 +141,7 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).setFeeParams(20, 100), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setRewardsManager(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).recoverToken(v2pair.address, await alan.getAddress(), 10), /only owner or defender/);
-            
+            await shouldThrow(liquidityOps.connect(alan).setFarmLockTime(86400*365), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
 
@@ -170,6 +170,9 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(frank).exchange(v2pair.address, 100, 100), /not enough tokens/);
             await shouldThrow(liquidityOps.connect(frank).removeLiquidityImbalance([10, 1], 100), /no liquidity/);
             await shouldThrow(liquidityOps.connect(frank).exchange(fxsToken.address, 100, 100), /unknown token/);
+
+            await shouldThrow(liquidityOps.setFarmLockTime(1), /Minimum lock time not met/);
+            await shouldThrow(liquidityOps.setFarmLockTime((86400*1)-1), /Trying to lock for too long/);
         });
 
         it("should set peg defender", async () => {
@@ -206,12 +209,16 @@ describe("Liquidity Ops", async () => {
             expect(await liquidityOps.feeCollector()).to.eq(await feeCollector.getAddress());
         });
 
-        it("should return right time for max lock", async() => {
-            expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
+        it("should set gauge lock time", async () => {
+            const secs = 86400 * 7; // 1 week is the max allowable
+            await expect(liquidityOps.setFarmLockTime(secs))
+                .to.emit(liquidityOps, "FarmLockTimeSet")
+                .withArgs(secs);
+            expect(await liquidityOps.farmLockTime()).to.eq(secs);
         });
 
-        it("should toggle migrator for migration", async () => {
-            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
+        it("should return right time for max lock", async() => {
+            expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
         });
 
         it("should set reward tokens", async() => {
@@ -219,6 +226,10 @@ describe("Liquidity Ops", async () => {
           const rewardTokens = await lpFarm.getAllRewardTokens();
           expect(await liquidityOps.rewardTokens(0)).to.eq(rewardTokens[0]);
           expect(await liquidityOps.rewardTokens(1)).to.eq(rewardTokens[1]);
+        });
+
+        it("should toggle migrator for migration", async () => {
+            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("owner or peg defender can recover tokens", async () => {

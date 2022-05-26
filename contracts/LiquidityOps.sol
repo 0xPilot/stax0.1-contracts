@@ -27,6 +27,7 @@ interface IUnifiedFarm {
     function stakerSetVeFXSProxy(address proxy_address) external;
     function stakerToggleMigrator(address migrator_address) external;
     function lock_time_for_max_multiplier() external view returns (uint256);
+    function lock_time_min() external view returns (uint256);
     function getAllRewardTokens() external view returns (address[] memory);
     function lockedLiquidityOf(address account) external view returns (uint256);
     function lockedStakesOf(address account) external view returns (LockedStake[] memory);
@@ -83,6 +84,9 @@ contract LiquidityOps is Ownable {
     // fxs emissions + random token extra bribe
     IERC20[] public rewardTokens;
 
+    // The period of time (secs) to lock liquidity into the farm.
+    uint256 public farmLockTime;
+
     // FEE_DENOMINATOR from Curve StableSwap
     uint256 internal constant CURVE_FEE_DENOMINATOR = 1e10;
 
@@ -102,6 +106,7 @@ contract LiquidityOps is Ownable {
     event CoinExchanged(address coinSent, uint256 amountSent, uint256 amountReceived);
     event RemovedLiquidityImbalance(uint256 _amount0, uint256 _amounts1, uint256 burnAmount);
     event PegDefenderSet(address defender);
+    event FarmLockTimeSet(uint256 secs);
 
     constructor(
         address _lpFarm,
@@ -130,6 +135,9 @@ contract LiquidityOps is Ownable {
         // No fees are taken by default
         feeRate.numerator = 0;
         feeRate.denominator = 100;
+
+        // By default, set the lock time to the max (eg 3yrs for TEMPLE/FRAX)
+        farmLockTime = lpFarm.lock_time_for_max_multiplier();
     }
 
     function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
@@ -160,6 +168,13 @@ contract LiquidityOps is Ownable {
         feeCollector = _feeCollector;
 
         emit FeeCollectorSet(_feeCollector);
+    }
+
+    function setFarmLockTime(uint256 _secs) external onlyOwner {
+        require(_secs >= lpFarm.lock_time_min(), "Minimum lock time not met");
+        require(_secs <= lpFarm.lock_time_for_max_multiplier(),"Trying to lock for too long");
+        farmLockTime = _secs;
+        emit FarmLockTimeSet(_secs);
     }
 
     function lockTimeForMaxMultiplier() public view returns (uint256) {
@@ -229,7 +244,7 @@ contract LiquidityOps is Ownable {
         // we want to lock additional if lock end time not expired
         // check last lockedStake if expired
         if (lockedStakesLength == 0 || block.timestamp >= lockedStakes[lockedStakesLength - 1].ending_timestamp) {
-            lpFarm.stakeLocked(liquidity, lockTimeForMaxMultiplier());
+            lpFarm.stakeLocked(liquidity, farmLockTime);
         } else {
             lpFarm.lockAdditional(lockedStakes[lockedStakesLength - 1].kek_id, liquidity);
         }
@@ -354,7 +369,7 @@ contract LiquidityOps is Ownable {
         // avoid locking in a stale lock position. i.e. a lock with start and endtimestamp set to 0
         // check last lockedStake if expired
         if (block.timestamp >= lockedStakes[lockedStakesLength - 1].ending_timestamp) {
-            lpFarm.stakeLocked(lockAmount, lockTimeForMaxMultiplier());
+            lpFarm.stakeLocked(lockAmount, farmLockTime);
         } else {
             lpFarm.lockAdditional(lockedStakes[lockedStakesLength - 1].kek_id, lockAmount);
         }
