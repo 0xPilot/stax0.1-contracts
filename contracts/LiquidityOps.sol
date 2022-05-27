@@ -361,6 +361,7 @@ contract LiquidityOps is Ownable {
             lockAmount = lpTokensAfter - lpTokensBefore;
         }
 
+        require(lockAmount > 0, "nothing to withdraw");
         lpToken.safeIncreaseAllowance(address(lpFarm), lockAmount);
 
         // Re-lock into the most recent lock
@@ -417,6 +418,13 @@ contract LiquidityOps is Ownable {
         emit SetVeFXSProxy(_proxy);
     }
 
+    // Owner can withdraw any locked position.
+    // Migration on expired locks can then happen without farm gov/owner having to pause and toggleMigrations()
+    function withdrawLocked(bytes32 kek_id, address destination_address) external onlyOwner {
+        // The farm emits WithdrawLocked events.
+        lpFarm.withdrawLocked(kek_id, destination_address);
+    }
+    
     // To migrate:
     // - unified farm owner/gov sets valid migrator
     // - stakerToggleMigrator() - this func

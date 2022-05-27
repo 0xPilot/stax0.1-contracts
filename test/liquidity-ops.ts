@@ -81,18 +81,11 @@ describe("Liquidity Ops", async () => {
             });
             lpBigHolder = await ethers.getSigner(lpBigHolderAddress);
 
-            await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 3000);
+            await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), 10000);
             await v2pair.connect(lpBigHolder).transfer(await templeMultisig.getAddress(), 1000000);
         }
 
         curvePool = await createCurveStableSwap(owner, staxLPToken, v2pair, templeMultisig);
-
-        liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
-            curvePool.address, rewardsManager.address, await feeCollector.getAddress());
-            
-        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, 
-            staxLPToken.address, staking.address, curvePool.address);
-        await staxLPToken.addMinter(locker.address);
 
         fxsToken = ERC20__factory.connect(fxsTokenAddress, alan);
         templeToken = ERC20__factory.connect(templeTokenAddress, alan);
@@ -122,15 +115,22 @@ describe("Liquidity Ops", async () => {
                 templeToken.address, await lpFarm.rewardRates(0), 
                 ZERO_ADDRESS, ZERO_ADDRESS);
 
+            // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
+            fxsToken.connect(fraxMultisig).transfer(lpFarm.address, await fxsToken.balanceOf(await fraxMultisig.getAddress()));
+            templeToken.connect(templeMultisig).transfer(lpFarm.address, await templeToken.balanceOf(await templeMultisig.getAddress()));
+
             await network.provider.request({
                 method: "hardhat_stopImpersonatingAccount",
                 params: [fraxMultisigAddress],
             });
         }
 
-        // send fxs and temple to lp farm to ensure enough reward tokens before fast forwarding
-        fxsToken.connect(fraxMultisig).transfer(lpFarm.address, await fxsToken.balanceOf(await fraxMultisig.getAddress()));
-        templeToken.connect(templeMultisig).transfer(lpFarm.address, await templeToken.balanceOf(await templeMultisig.getAddress()));
+        liquidityOps = await new LiquidityOps__factory(owner).deploy(lpFarm.address, v2pair.address, staxLPToken.address,
+            curvePool.address, rewardsManager.address, await feeCollector.getAddress());
+            
+        locker = await new LockerProxy__factory(owner).deploy(liquidityOps.address, v2pair.address, 
+            staxLPToken.address, staking.address, curvePool.address);
+        await staxLPToken.addMinter(locker.address);
     });
 
     describe("Liquidity", async () => {
@@ -144,6 +144,7 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.connect(alan).setFarmLockTime(86400*365), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).stakerToggleMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
             await shouldThrow(liquidityOps.connect(alan).setVeFXSProxy(await alan.getAddress()), /Ownable: caller is not the owner/);
+            await shouldThrow(liquidityOps.connect(alan).withdrawLocked(ethers.constants.HashZero, await alan.getAddress()), /Ownable: caller is not the owner/);
 
             await shouldThrow(liquidityOps.connect(alan).removeLiquidity(100, 0, 0), /not defender/);
             await shouldThrow(liquidityOps.connect(owner).removeLiquidity(100, 0, 0), /not defender/);
@@ -467,6 +468,9 @@ describe("Liquidity Ops", async () => {
             expect(newLockedStakes[0].ending_timestamp).to.eq(0);
             expect(newLockedStakes[0].lock_multiplier).to.eq(0);
 
+            // Withdrawing the old kek_id again should now fail.
+            await shouldThrow(liquidityOps.withdrawAndRelock(kekId), /nothing to withdraw/);
+
             // lock, fast forward and relock again to ensure only one active lock
             await locker.connect(alan).lock(50, false);
             const minCurveAmountOut2 = await liquidityOps.minCurveLiquidityAmountOut(50, curveSlippage);
@@ -483,6 +487,42 @@ describe("Liquidity Ops", async () => {
             expect(newLockedStakes[1].liquidity).to.eq(0);
             expect(newLockedStakes[1].ending_timestamp).to.eq(0);
             expect(newLockedStakes[1].lock_multiplier).to.eq(0);
+        });
+
+        it("should withdraw only", async() => {
+            // lock
+            await liquidityOps.setLockParams(80, 100);
+            await v2pair.connect(alan).approve(locker.address, 10000);
+            await staxLPToken.addMinter(liquidityOps.address);
+            await staxLPToken.addMinter(locker.address);
+            await locker.connect(alan).lock(10000, false);
+
+            // fast forward to end of locktime
+            await mineForwardSeconds(7 * 86400);
+
+            const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(10000, curveSlippage);
+            await liquidityOps.applyLiquidity(10000, minCurveAmountOut);
+
+            // fast forward to end of locktime
+            await mineForwardSeconds(8 * 86400);
+
+            // new lock stake
+            const lockedStakes = await lpFarm.lockedStakesOf(liquidityOps.address);
+            const lockedStake = lockedStakes[0];
+            const kekId = lockedStake.kek_id;
+
+            const frankAddr = await frank.getAddress();
+            const lpBefore = await v2pair.balanceOf(frankAddr);
+            const fxsBefore = await fxsToken.balanceOf(frankAddr);
+            const templeBefore = await templeToken.balanceOf(frankAddr);
+            await expect(liquidityOps.withdrawLocked(kekId, frankAddr))
+                .to.emit(lpFarm, "WithdrawLocked")
+                .withArgs(liquidityOps.address, 10000*0.8, kekId, frankAddr);
+
+            // Check that frank ended up being sent the LP, and any earned rewards
+            expect(await v2pair.balanceOf(frankAddr)).eq(lpBefore.add(10000*0.8));
+            expect(await fxsToken.balanceOf(frankAddr)).gt(fxsBefore);
+            expect(await templeToken.balanceOf(frankAddr)).gt(templeBefore);
         });
 
         it("exchanges one coin for another", async () => {
