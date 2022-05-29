@@ -22,12 +22,20 @@ interface IVeFXS {
     function token() external view returns (address);
 }
 
-contract VeFXSLocker is Ownable {
+interface IGaugeController {
+    function vote(uint256, bool, bool) external; //voteId, support, executeIfDecided
+    function getVote(uint256) external view returns(bool,bool,uint64,uint64,uint64,uint64,uint256,uint256,uint256,bytes memory); 
+    function vote_for_gauge_weights(address,uint256) external;
+}
+
+contract VeFXSProxy is Ownable {
     using SafeERC20 for IERC20;
 
     /// @dev The underlying veFXS contract which STAX is locking into.
     IVeFXS public veFXS;
     IERC20 public fxsToken;
+
+    IGaugeController public gaugeController;
 
     /// @dev A set of addresses which are approved to create/update/withdraw the STAX veFXS holdings.
     mapping(address => bool) public opsManagers;
@@ -36,9 +44,10 @@ contract VeFXSLocker is Ownable {
     event TokenRecovered(address user, uint256 amount);
     event WithdrawnTo(address to, uint256 amount);
 
-    constructor(address _veFXS) {
+    constructor(address _veFXS, address _gaugeController) {
         veFXS = IVeFXS(_veFXS);
         fxsToken = IERC20(veFXS.token());
+        gaugeController = IGaugeController(_gaugeController);
     }
 
     /** 
@@ -90,6 +99,14 @@ contract VeFXSLocker is Ownable {
       */
     function increaseUnlockTime(uint256 _unlock_time) external onlyOwnerOrOpsManager {
         veFXS.increase_unlock_time(_unlock_time);
+    }
+
+    function withdraw() external onlyOwnerOrOpsManager {
+        veFXS.withdraw();
+    }
+
+    function voteGaugeWeight(address _gauge, uint256 _weight) external onlyOwnerOrOpsManager {
+        gaugeController.vote_for_gauge_weights(_gauge, _weight);
     }
 
     /** 
@@ -149,11 +166,6 @@ contract VeFXSLocker is Ownable {
         return veFXS.supply();
     }
 
-    modifier onlyOwnerOrOpsManager() {
-        require(msg.sender == owner() || opsManagers[msg.sender] == true, "not owner or ops manager");
-        _;
-    }
-
     // recover tokens
     function recoverToken(address _token, address _to, uint256 _amount) external onlyOwner {
         _transferToken(IERC20(_token), _to, _amount);
@@ -164,5 +176,16 @@ contract VeFXSLocker is Ownable {
         uint256 balance = _token.balanceOf(address(this));
         require(_amount <= balance, "not enough tokens");
         _token.safeTransfer(_to, _amount);
+    }
+
+    // execute arbitrary functions
+    function execute(address _to, bytes calldata _data) external onlyOwner {
+      (bool success,) = _to.call{value: 0}(_data);
+      require(success, "Execution failed");
+    }
+
+    modifier onlyOwnerOrOpsManager() {
+        require(msg.sender == owner() || opsManagers[msg.sender] == true, "not owner or ops manager");
+        _;
     }
 }
