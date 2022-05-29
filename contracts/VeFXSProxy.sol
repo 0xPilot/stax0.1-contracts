@@ -173,9 +173,10 @@ contract VeFXSProxy is Ownable {
     }
 
     // execute arbitrary functions
-    function execute(address _to, bytes calldata _data) external onlyOwner {
-      (bool success,) = _to.call{value: 0}(_data);
+    function execute(address _to, uint256 _value, bytes calldata _data) external onlyOwner  returns (bytes memory) {
+      (bool success, bytes memory returndata) = _to.call{value: _value}(_data);
       require(success, "Execution failed");
+      return returndata;
     }
 
     modifier onlyOwnerOrOpsManager() {
