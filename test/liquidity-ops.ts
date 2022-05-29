@@ -218,8 +218,8 @@ describe("Liquidity Ops", async () => {
             expect(await liquidityOps.farmLockTime()).to.eq(secs);
         });
 
-        it("should return right time for max lock", async() => {
-            expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(7 * 86400);
+        it("should toggle migrator for migration", async () => {
+            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("should set reward tokens", async() => {
@@ -227,10 +227,6 @@ describe("Liquidity Ops", async () => {
           const rewardTokens = await lpFarm.getAllRewardTokens();
           expect(await liquidityOps.rewardTokens(0)).to.eq(rewardTokens[0]);
           expect(await liquidityOps.rewardTokens(1)).to.eq(rewardTokens[1]);
-        });
-
-        it("should toggle migrator for migration", async () => {
-            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("owner or peg defender can recover tokens", async () => {
@@ -311,7 +307,7 @@ describe("Liquidity Ops", async () => {
             expect(await v2pair.balanceOf(liquidityOps.address)).eq(0);
 
             expect(await lpFarm.lockedLiquidityOf(liquidityOps.address)).to.eq(0.8*(100+50));
-            expect(await liquidityOps.lockTimeForMaxMultiplier()).to.eq(lockedStake.ending_timestamp.sub(lockedStake.start_timestamp));
+            expect(await lpFarm.lock_time_for_max_multiplier()).to.eq(lockedStake.ending_timestamp.sub(lockedStake.start_timestamp));
 
             // fast forward to end of locktime
             await mineForwardSeconds(7 * 86400);
@@ -440,9 +436,6 @@ describe("Liquidity Ops", async () => {
             await staxLPToken.addMinter(locker.address);
             await locker.connect(alan).lock(100, false);
 
-            // fast forward to end of locktime
-            await mineForwardSeconds(7 * 86400);
-
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
             await liquidityOps.applyLiquidity(100, minCurveAmountOut);
 
@@ -496,9 +489,6 @@ describe("Liquidity Ops", async () => {
             await staxLPToken.addMinter(liquidityOps.address);
             await staxLPToken.addMinter(locker.address);
             await locker.connect(alan).lock(10000, false);
-
-            // fast forward to end of locktime
-            await mineForwardSeconds(7 * 86400);
 
             const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(10000, curveSlippage);
             await liquidityOps.applyLiquidity(10000, minCurveAmountOut);

@@ -221,7 +221,6 @@ contract StaxLPStaking is Ownable {
         emit RewardAdded(_rewardsToken, _amount);
     }
 
-
     modifier updateReward(address _account) {
         {
             // stack too deep

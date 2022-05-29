@@ -177,10 +177,6 @@ contract LiquidityOps is Ownable {
         emit FarmLockTimeSet(_secs);
     }
 
-    function lockTimeForMaxMultiplier() public view returns (uint256) {
-        return lpFarm.lock_time_for_max_multiplier();
-    }
-
     // set lp farm in case of migration
     function setLPFarm(address _lpFarm) external onlyOwner {
         require(_lpFarm != address(0), "invalid address");
