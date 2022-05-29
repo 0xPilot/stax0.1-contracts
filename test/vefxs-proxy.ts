@@ -15,8 +15,7 @@ import {
 
 describe("VeFXS Proxy", async () => {
     let owner: Signer;
-    let alan: Signer;
-    let ben: Signer;
+    let operator: Signer;
     let fraxMultisig: Signer;
     let veFxsProxy: VeFXSProxy;
     let veFXS: VeFXS;
@@ -38,7 +37,7 @@ describe("VeFXS Proxy", async () => {
     });
 
     beforeEach(async () => {
-        [owner, alan, ben] = await ethers.getSigners();
+        [owner, operator] = await ethers.getSigners();
         veFxsProxy = await new VeFXSProxy__factory(owner).deploy(veFxsAddress, gaugeControllerAddress);
 
         smartWalletWhitelist = SmartWalletWhitelist__factory.connect(smartWalletWhitelistAddress, owner);
@@ -58,6 +57,25 @@ describe("VeFXS Proxy", async () => {
     });
 
     it("admin tests", async () => {
+        // fails
+        await shouldThrow(veFxsProxy.connect(operator).approveOpsManager(await operator.getAddress(), true), /s/);
+        await shouldThrow(veFxsProxy.connect(operator).recoverToken(veFXS.address, await operator.getAddress(), 100), /s/);
+        await shouldThrow(veFxsProxy.connect(operator).createLock(100, 69420), /not owner or ops manager/);
+        await shouldThrow(veFxsProxy.connect(operator).increaseAmount(100), /not owner or ops manager/);
+        await shouldThrow(veFxsProxy.connect(operator).increaseUnlockTime(69420), /not owner or ops manager/);
+        await shouldThrow(veFxsProxy.connect(operator).voteGaugeWeight(veFXS.address, 300), /not owner or ops manager/);
+
+        // happy path
+        await veFxsProxy.approveOpsManager(await operator.getAddress(), true);
+    });
+
+    it("approves ops manager", async () => {
+        await expect(veFxsProxy.approveOpsManager(await operator.getAddress(), true))
+            .to.emit(veFxsProxy, "ApprovedOpsManager")
+            .withArgs(await operator.getAddress(), true);
+    });
+
+    it("creates lock", async () => {
 
     });
 
