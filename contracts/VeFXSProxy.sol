@@ -99,10 +99,6 @@ contract VeFXSProxy is Ownable {
         veFXS.increase_unlock_time(_unlock_time);
     }
 
-    function withdraw() external onlyOwnerOrOpsManager {
-        veFXS.withdraw();
-    }
-
     function voteGaugeWeight(address _gauge, uint256 _weight) external onlyOwnerOrOpsManager {
         gaugeController.vote_for_gauge_weights(_gauge, _weight);
     }
