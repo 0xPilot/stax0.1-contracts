@@ -33,7 +33,7 @@ async function main() {
   const coins: [string, string, string, string] = [
       staxLPToken.address, v2pair.address,
       ZERO_ADDRESS, ZERO_ADDRESS];
-  const A = 50;
+  const A = 40;  // Same ballpark as cvxCRV/CRV
   const fee = 15000000; // 0.15 %
   const assetType = 3; // 'Other'
   const implementationIndex = 3; // Optimised version

@@ -46,7 +46,8 @@ async function main() {
 
     // Liquidity Ops initial policy / state
     await mine(liquidityOps.setRewardTokens());
-    await mine(liquidityOps.setLockParams(80, 100)); // By default: 80% locked in the gauge, 20% in the curve pool
+    await mine(liquidityOps.setLockParams(70, 100));      // By default: 70% locked in the gauge, 30% in the curve pool
+    await mine(liquidityOps.setFarmLockTime(86400*182));  // By default: Set to 6 month lock time.
 
     // Transfer ownership to the multisig
     await mine(staxStaking.transferOwnership(DEPLOYED.MULTISIG));

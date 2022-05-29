@@ -7,9 +7,10 @@ import {
   TempleUniswapV2Pair__factory, 
   LiquidityOps__factory, 
   LockerProxy__factory,
+  FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
   VeFXSProxy__factory,
-  ERC20__factory,
   SmartWalletWhitelist__factory,
+  ERC20__factory,
 } from '../../../typechain';
 import {
   DeployedContracts,
@@ -103,6 +104,7 @@ async function main() {
   const v2pair = TempleUniswapV2Pair__factory.connect(DEPLOYED.TEMPLE_V2_PAIR, templeMultisig);
   const lockerProxy = LockerProxy__factory.connect(DEPLOYED.LOCKER_PROXY, templeMultisig);
   const liquidityOps = LiquidityOps__factory.connect(DEPLOYED.LIQUIDITY_OPS, templeMultisig);
+  const lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(DEPLOYED.FRAX_TEMPLE_UNIFIED_FARM, templeMultisig);
 
   const amount = ethers.utils.parseEther("10");
   
@@ -168,6 +170,10 @@ async function main() {
   console.log("Fred LP bal:", await v2pair.balanceOf(await fred.getAddress()));
   
   await createVeFXSLock(DEPLOYED, templeMultisig, veFxsOps);
+
+  const stakes = await lpFarm.lockedStakesOf(liquidityOps.address);
+  const lockDuration = stakes[0].ending_timestamp.sub(stakes[0].start_timestamp);
+  console.log("Time (seconds) until gauge unlocks:", lockDuration.toString(), "In days:", lockDuration.div(60*60*24).toString());
 }
 
 // We recommend this pattern to be able to use async/await everywhere
