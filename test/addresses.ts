@@ -6,3 +6,6 @@ export const lpTokenAddress = "0x6021444f1706f15465bEe85463BCc7d7cC17Fc03";
 export const fxsTokenAddress = "0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0";
 export const templeTokenAddress = "0x470EBf5f030Ed85Fc1ed4C2d36B9DD02e77CF1b7";
 export const curveFactoryAddress = "0xB9fC157394Af804a3578134A6585C0dc9cc990d4";
+export const veFxsAddress = "0xc8418aF6358FFddA74e09Ca9CC3Fe03Ca6aDC5b0";
+export const smartWalletWhitelistAddress = "0x53c13BA8834a1567474b19822aAD85c6F90D9f9F";
+export const gaugeControllerAddress = "0x3669C421b77340B2979d1A00a792CC2ee0FcE737";
