@@ -25,10 +25,19 @@ async function main() {
   // deploy to rinkeby for show purposes
   const veFxsProxyFactory = new VeFXSProxy__factory(owner);
   const veFxsProxy: VeFXSProxy = await deployAndMine(
-    'LockerProxy', veFxsProxyFactory, veFxsProxyFactory.deploy,
+    'VeFXSProxy', veFxsProxyFactory, veFxsProxyFactory.deploy,
     DEPLOYED.VEFXS, 
     DEPLOYED.FXS_GAUGE_CONTROLLER,
   );
 
   await mine(veFxsProxy.transferOwnership(DEPLOYED.MULTISIG));
 }
+
+// We recommend this pattern to be able to use async/await everywhere
+// and properly handle errors.
+main()
+  .then(() => process.exit(0))
+  .catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
