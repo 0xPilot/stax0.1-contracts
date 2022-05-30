@@ -5,7 +5,9 @@ import {
     LockerProxy__factory,
     StaxLP__factory,
     StaxLPStaking__factory,
-    RewardsManager__factory } from '../../../typechain';
+    RewardsManager__factory,
+    VeFXSProxy__factory,
+} from '../../../typechain';
 import {
     ensureExpectedEnvvars,
     getDeployedContracts,
@@ -23,6 +25,7 @@ async function main() {
     const rewardsManager = RewardsManager__factory.connect(DEPLOYED.REWARDS_MANAGER, owner);
     const lockerProxy = LockerProxy__factory.connect(DEPLOYED.LOCKER_PROXY, owner);
     const liquidityOps = LiquidityOps__factory.connect(DEPLOYED.LIQUIDITY_OPS, owner);
+    const veFxsProxy = VeFXSProxy__factory.connect(DEPLOYED.VEFXS_PROXY, owner);
 
     // Add liquidityOps and lockerProxy as xLP minters
     await mine(staxLP.addMinter(lockerProxy.address));
@@ -53,6 +56,9 @@ async function main() {
 
     // Transfer locker proxy ownership to the multisig
     await mine(lockerProxy.transferOwnership(DEPLOYED.MULTISIG));
+
+    // Transfer locker proxy ownership to the multisig
+    await mine(veFxsProxy.transferOwnership(DEPLOYED.MULTISIG));
 }
 
 // We recommend this pattern to be able to use async/await everywhere

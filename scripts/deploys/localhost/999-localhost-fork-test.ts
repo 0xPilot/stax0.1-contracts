@@ -1,7 +1,16 @@
 import '@nomiclabs/hardhat-ethers';
 import { BigNumber, Signer } from 'ethers';
 import { ethers, network } from 'hardhat';
-import { CurvePool__factory, StaxLP__factory, TempleUniswapV2Pair__factory, LiquidityOps__factory, LockerProxy__factory } from '../../../typechain';
+import { 
+  CurvePool__factory, 
+  StaxLP__factory, 
+  TempleUniswapV2Pair__factory, 
+  LiquidityOps__factory, 
+  LockerProxy__factory,
+  VeFXSProxy__factory,
+  ERC20__factory,
+  SmartWalletWhitelist__factory,
+} from '../../../typechain';
 import {
   DeployedContracts,
   DEPLOYED_CONTRACTS,
@@ -26,9 +35,53 @@ async function sendLP(DEPLOYED: DeployedContracts, to: Signer, amount: BigNumber
   });
 }
 
+async function createVeFXSLock(DEPLOYED: DeployedContracts, templeMultisig: Signer, veFxsOps: Signer) {
+  const veFxsProxy = VeFXSProxy__factory.connect(DEPLOYED.VEFXS_PROXY, templeMultisig);
+  
+  // Give the operator some FXS
+  // impersonate frax multisig and whitelist VeFxsProxy for veFXS locking
+  let fraxMultisig: Signer;
+  {
+    const fraxMultisigAddress = "0xB1748C79709f4Ba2Dd82834B8c82D4a505003f27";
+    await network.provider.request({
+        method: "hardhat_impersonateAccount",
+        params: [fraxMultisigAddress]
+    });
+    fraxMultisig = await ethers.getSigner(fraxMultisigAddress);
+    
+    const smartWalletWhitelistAddress = "0x53c13BA8834a1567474b19822aAD85c6F90D9f9F";
+    let smartWalletWhitelist = SmartWalletWhitelist__factory.connect(smartWalletWhitelistAddress, fraxMultisig);
+    smartWalletWhitelist.connect(fraxMultisig).approveWallet(veFxsProxy.address);
+  }
+  
+  const fxsToken = ERC20__factory.connect(DEPLOYED.FXS, fraxMultisig);
+
+  const veFxsOpsAddr = await veFxsOps.getAddress();
+  const amount = ethers.utils.parseEther("1000");
+  await fxsToken.transfer(veFxsOpsAddr, amount);
+  await veFxsProxy.approveOpsManager(veFxsOpsAddr, true); 
+
+  // Liquidity Ops does not yet 
+  await fxsToken.connect(veFxsOps).approve(veFxsProxy.address, amount);
+  const currentTime = (await ethers.provider.getBlock(await ethers.provider.getBlockNumber())).timestamp;
+  const idealUnlockTime = currentTime + 86400*365;  // 1 year
+
+  // Create lock
+  const lockedBefore = await veFxsProxy.locked();
+
+  if (lockedBefore.amount.eq(0)) {
+    await veFxsProxy.connect(veFxsOps).createLock(amount, idealUnlockTime);
+  } else {
+    await veFxsProxy.connect(veFxsOps).increaseAmount(amount);
+  }
+
+  const lockedAfter = await veFxsProxy.locked();
+  console.log("Created veFXS Lock:", lockedAfter);
+}
+
 async function main() {
   ensureExpectedEnvvars();
-  const [owner, fred] = await ethers.getSigners();
+  const [owner, fred, veFxsOps] = await ethers.getSigners();
 
   let DEPLOYED: DeployedContracts;
 
@@ -113,6 +166,8 @@ async function main() {
   console.log("liquidity ops LP bal:", await v2pair.balanceOf(liquidityOps.address));
   console.log("Fred xLP bal:", await staxlp.balanceOf(await fred.getAddress()));
   console.log("Fred LP bal:", await v2pair.balanceOf(await fred.getAddress()));
+  
+  await createVeFXSLock(DEPLOYED, templeMultisig, veFxsOps);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

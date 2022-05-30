@@ -24,6 +24,7 @@ export interface DeployedContracts {
   LIQUIDITY_OPS: string,
   LOCKER_PROXY: string,
   VEFXS: string,
+  VEFXS_PROXY: string
 }
 
 export interface PolygonContracts {
@@ -62,6 +63,7 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     FXS_GAUGE_CONTROLLER: '0x370eB2c1747a087c1798440cb42C4dddd838b430',
     FRAX_TEMPLE_UNIFIED_FARM: '0x64cA87224370c4a732B863b6950CD1f8fbD91d29',
     VEFXS: '0xf71E122f053fFE38E4D72F2ea855578D04c81458',
+    VEFXS_PROXY: '',
 
     // CURVE
     CURVE_POOL: '0x523099a7ae4b4eCf70E517C2F1Bc502f23f1356d', 
@@ -75,6 +77,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     TEMPLE_V2_PAIR: '0x6021444f1706f15465bEe85463BCc7d7cC17Fc03',
     FRAX_TEMPLE_UNIFIED_FARM: '0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16',
     CURVE_FACTORY: '0xB9fC157394Af804a3578134A6585C0dc9cc990d4',
+    FXS_GAUGE_CONTROLLER: '0x3669C421b77340B2979d1A00a792CC2ee0FcE737',
+    VEFXS: '0xc8418aF6358FFddA74e09Ca9CC3Fe03Ca6aDC5b0',
 
     // New STAX contracts - to fill in.
     STAX_TOKEN: '',
@@ -83,11 +87,9 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     REWARDS_MANAGER: '',
     LIQUIDITY_OPS: '',
     LOCKER_PROXY: '',
+    VEFXS_PROXY: '',
 
     // Unused in mainnet deploy:
-    FXS_GAUGE_CONTROLLER: '',
-    VEFXS: '',
-
     CURVE_POOL_IMPLEMENTATION: '',
     TEMPLE_V2_ROUTER: '',
     TEMPLE: '',
@@ -105,6 +107,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     TEMPLE_V2_PAIR: '0x6021444f1706f15465bEe85463BCc7d7cC17Fc03',
     FRAX_TEMPLE_UNIFIED_FARM: '0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16',
     CURVE_FACTORY: '0xB9fC157394Af804a3578134A6585C0dc9cc990d4',
+    FXS_GAUGE_CONTROLLER: '0x3669C421b77340B2979d1A00a792CC2ee0FcE737',
+    VEFXS: '0xc8418aF6358FFddA74e09Ca9CC3Fe03Ca6aDC5b0',
 
     // New STAX contracts - to fill in.
     STAX_TOKEN: '0xaB7B4c595d3cE8C85e16DA86630f2fc223B05057',
@@ -113,6 +117,7 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     REWARDS_MANAGER: '0x2b5A4e5493d4a54E717057B127cf0C000C876f9B',
     LIQUIDITY_OPS: '0x413b1AfCa96a3df5A686d8BFBF93d30688a7f7D9',
     LOCKER_PROXY: '0x02df3a3F960393F5B349E40A599FEda91a7cc1A7',
+    VEFXS_PROXY: '0x821f3361D454cc98b7555221A06Be563a7E2E0A6',
 
     // Unused in mainnet deploy:
     CURVE_POOL_IMPLEMENTATION: '',
@@ -121,8 +126,6 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     TREASURY: '',
     TREASURY_MANAGEMENT: '',
     FRAX: '',
-    FXS_GAUGE_CONTROLLER: '',
-    VEFXS: '',
   }
 }
 
