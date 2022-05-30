@@ -5,7 +5,8 @@ import {
   CurvePoolStub, CurvePoolStub__factory, 
   FraxUnifiedFarmERC20TempleFRAXTEMPLEMod__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
   LiquidityOps__factory, LockerProxy__factory, 
-  StaxLP__factory, TempleUniswapV2Pair__factory, 
+  RewardsManager__factory, 
+  StaxLP__factory, TempleERC20Token__factory, TempleUniswapV2Pair__factory, 
   VeFXS__factory } from '../../../typechain';
 import {
   blockTimestamp,
@@ -69,11 +70,11 @@ async function sendFarmRewardsAndSync(DEPLOYED: DeployedContracts, owner: Signer
     const lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory.connect(DEPLOYED.FRAX_TEMPLE_UNIFIED_FARM, owner);
     const fxs = StaxLP__factory.connect(DEPLOYED.FXS, owner);
     const temple = StaxLP__factory.connect(DEPLOYED.TEMPLE, owner);
+    await mine(fxs.mint(await owner.getAddress(), BigNumber.from(ethers.utils.parseEther("10000"))));
+    await mine(fxs.transfer(lpFarm.address, BigNumber.from(ethers.utils.parseEther("200")), {gasLimit: 500000}));
+    await mine(temple.transfer(lpFarm.address, BigNumber.from(ethers.utils.parseEther("200")), {gasLimit: 500000}));
 
-    await mine(fxs.transfer(lpFarm.address, BigNumber.from(ethers.utils.parseEther("200"))));
-    await mine(temple.transfer(lpFarm.address, BigNumber.from(ethers.utils.parseEther("200"))));
-
-    await mine(lpFarm.sync());
+    await mine(lpFarm.sync({gasLimit: 500000}));
 }
 
 async function lockAndStakeLP(DEPLOYED: DeployedContracts, owner: Signer) {
@@ -93,6 +94,14 @@ async function addMinters(DEPLOYED: DeployedContracts, owner: Signer) {
   const adminRole = await staxlp.getRoleAdmin(await staxlp.CAN_MINT());
   await mine(staxlp.grantRole(adminRole, DEPLOYED.MULTISIG));
   await mine(staxlp.transferOwnership(DEPLOYED.MULTISIG));
+}
+
+async function addRewardsOpsAsMinter(DEPLOYED: DeployedContracts, owner: Signer) {
+  const fxs = StaxLP__factory.connect(DEPLOYED.FXS, owner);
+  const temple = TempleERC20Token__factory.connect(DEPLOYED.TEMPLE, owner);
+
+  await mine(fxs.addMinter(DEPLOYED.TEMP_REWARD_OPS));
+  await mine(temple.addMinter(DEPLOYED.TEMP_REWARD_OPS));
 }
 
 async function createVeFxsLock(DEPLOYED: DeployedContracts, owner: Signer) {
@@ -130,6 +139,21 @@ async function setOpsParams(DEPLOYED: DeployedContracts, owner: Signer) {
   //await mine(liquidityOps.setLockParams(80, 100));
 }
 
+async function transferOwnerships(DEPLOYED: DeployedContracts, owner: Signer) {
+  const lpFarm = FraxUnifiedFarmERC20TempleFRAXTEMPLEMod__factory.connect(DEPLOYED.FRAX_TEMPLE_UNIFIED_FARM, owner);
+  await mine(lpFarm.nominateNewOwner(DEPLOYED.MULTISIG));
+}
+
+async function distributeRewards(DEPLOYED: DeployedContracts, owner: Signer) {
+  const fxs = StaxLP__factory.connect(DEPLOYED.FXS, owner);
+  const rewardsManager = RewardsManager__factory.connect(DEPLOYED.REWARDS_MANAGER, owner);
+  const temple = StaxLP__factory.connect(DEPLOYED.TEMPLE, owner);
+  await mine(fxs.transfer(DEPLOYED.REWARDS_MANAGER, BigNumber.from(ethers.utils.parseEther("500"))));
+  await mine(temple.transfer(DEPLOYED.TEMPLE, BigNumber.from(ethers.utils.parseEther("5000"))));
+  await mine(rewardsManager.distribute(fxs.address));
+  await mine(rewardsManager.distribute(temple.address));
+}
+
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
@@ -152,6 +176,8 @@ async function main() {
   //await createVeFxsLock(DEPLOYED, owner);
   //await testlockStaked(DEPLOYED, owner);
   //await sendFarmRewardsAndSync(DEPLOYED, owner);
+  //await transferOwnerships(DEPLOYED, owner);
+  await distributeRewards(DEPLOYED, owner);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

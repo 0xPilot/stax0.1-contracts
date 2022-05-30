@@ -24,6 +24,8 @@ export interface DeployedContracts {
   LIQUIDITY_OPS: string,
   LOCKER_PROXY: string,
   VEFXS: string,
+  TEMP_REWARD_DISTRIBUTOR: string,
+  TEMP_REWARD_OPS: string,
   VEFXS_PROXY: string
 }
 
@@ -54,6 +56,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     STAX_STAKING: '0x4C70a0A813c94F5598a8A646F287996E7aB987C8',
     STAX_TOKEN: '0xa30DB7c77575da7b0eE6870D081E43fedD8bE218',
     REWARDS_MANAGER: '0xD9fa3457443b506e09acdc9ED2a7DfAaB67F03E3',
+    TEMP_REWARD_DISTRIBUTOR: '0xe7DEFe9F0D09a695e7C225DAED456a4B25c0E519',
+    TEMP_REWARD_OPS: '0xe78D2301e0E2E40673Fa9bf6b2Fb17eA2cECB3F3',
 
     // liqudity ops
     LIQUIDITY_OPS: '0x4C8920a72df40b65D5025b507287EAF2c3925C08',
@@ -90,6 +94,9 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     VEFXS_PROXY: '',
 
     // Unused in mainnet deploy:
+    TEMP_REWARD_DISTRIBUTOR: '',
+    TEMP_REWARD_OPS: '',
+
     CURVE_POOL_IMPLEMENTATION: '',
     TEMPLE_V2_ROUTER: '',
     TEMPLE: '',
@@ -126,6 +133,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     TREASURY: '',
     TREASURY_MANAGEMENT: '',
     FRAX: '',
+    TEMP_REWARD_OPS: '',
+    TEMP_REWARD_DISTRIBUTOR: '',
   }
 }
 

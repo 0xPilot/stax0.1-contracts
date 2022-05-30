@@ -222,6 +222,10 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
+        it("should toggle migrator for migration", async () => {
+            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
+        });
+
         it("should set reward tokens", async() => {
           await liquidityOps.setRewardTokens();
           const rewardTokens = await lpFarm.getAllRewardTokens();
