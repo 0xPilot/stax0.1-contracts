@@ -59,11 +59,12 @@ describe("Rewards Manager", async () => {
     }
 
     it("admin tests", async () => {
-        await shouldThrow(rewardsManager.connect(alan).distribute(fxsToken.address), /Ownable: caller is not the owner/);
-        await shouldThrow(rewardsManager.distribute(fxsTokenAddress), /not distributor/);
+        await shouldThrow(rewardsManager.connect(alan).setOperator(await alan.getAddress()), /Ownable: caller is not the owner/);
+        await shouldThrow(rewardsManager.connect(alan).distribute(fxsToken.address), /not operator/);
     });
 
     it("no rewards set", async () => {
+        await rewardsManager.setOperator(await owner.getAddress());
         await staking.setRewardDistributor(rewardsManager.address);
 
         await shouldThrow(rewardsManager.distribute(fxsTokenAddress), /No reward/);
@@ -84,6 +85,7 @@ describe("Rewards Manager", async () => {
     });
 
     it("can distribute", async () => {
+        await rewardsManager.setOperator(await owner.getAddress());
         await staking.setRewardDistributor(rewardsManager.address);
         await staking.addReward(fxsToken.address);
 

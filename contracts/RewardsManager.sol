@@ -16,6 +16,7 @@ contract RewardsManager is Ownable {
     using SafeERC20 for IERC20;
 
     IStaxStaking public staking;
+    address public operator; // keeper
 
     event RewardDistributed(address staking, address token, uint256 amount);
 
@@ -25,16 +26,21 @@ contract RewardsManager is Ownable {
         staking = IStaxStaking(_staking);
     }
 
-    function distribute(address _token) external onlyOwner {
-        require(block.timestamp > staking.rewardPeriodFinish(_token), "last reward duration not finished");
-        _notifyRewardsAmount(_token, IERC20(_token).balanceOf(address(this)));
+    function setOperator(address _operator) external onlyOwner {
+        operator = _operator;
     }
 
     /// @dev notify staking contract about new rewards
-    function _notifyRewardsAmount(address _token, uint256 _amount) internal {
-        IERC20(_token).safeIncreaseAllowance(address(staking), _amount);
-        staking.notifyRewardAmount(_token, _amount);
+    function distribute(address _token) external onlyOperator {
+        uint256 amount = IERC20(_token).balanceOf(address(this));
+        IERC20(_token).safeIncreaseAllowance(address(staking), amount);
+        staking.notifyRewardAmount(_token, amount);
 
-        emit RewardDistributed(address(staking), _token, _amount);
+        emit RewardDistributed(address(staking), _token, amount);
+    }
+
+    modifier onlyOperator() {
+        require(msg.sender == operator, "not operator");
+        _;
     }
 }
