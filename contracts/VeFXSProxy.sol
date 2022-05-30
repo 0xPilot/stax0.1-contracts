@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-interface IVeFXS {
+interface IveFXS {
     struct LockedBalance {
         int128 amount;
         uint256 end;
@@ -18,21 +18,27 @@ interface IVeFXS {
     function totalSupply(uint256 t) external view returns (uint256);
     function totalFXSSupply() external  view returns (uint256);
     function locked(address addr) external view returns (LockedBalance memory);
-    function supply() external view returns (uint256);
     function token() external view returns (address);
 }
 
 interface IGaugeController {
-    function vote_for_gauge_weights(address,uint256) external;
+    function vote_for_gauge_weights(address _gauge_addr, uint256 _user_weight) external;
+}
+
+interface IUnifiedFarm {
+    function proxyToggleStaker(address staker_address) external;
 }
 
 contract VeFXSProxy is Ownable {
     using SafeERC20 for IERC20;
 
     /// @dev The underlying veFXS contract which STAX is locking into.
-    IVeFXS public veFXS;
+    IveFXS public veFXS;
+
+    /// @dev The underlying token being locked.
     IERC20 public fxsToken;
 
+    /// @dev Ability to vote for a gauge using STAX's veFXS balance
     IGaugeController public gaugeController;
 
     /// @dev A set of addresses which are approved to create/update/withdraw the STAX veFXS holdings.
@@ -41,9 +47,10 @@ contract VeFXSProxy is Ownable {
     event ApprovedOpsManager(address opsManager, bool approved);
     event TokenRecovered(address user, uint256 amount);
     event WithdrawnTo(address to, uint256 amount);
+    event GaugeProxyToggledStaker(address gaugeAddress, address stakerAddress);
 
     constructor(address _veFXS, address _gaugeController) {
-        veFXS = IVeFXS(_veFXS);
+        veFXS = IveFXS(_veFXS);
         fxsToken = IERC20(veFXS.token());
         gaugeController = IGaugeController(_gaugeController);
     }
@@ -99,6 +106,11 @@ contract VeFXSProxy is Ownable {
         veFXS.increase_unlock_time(_unlock_time);
     }
 
+    /**
+      * @dev Allocate voting power for changing pool weights, using STAX's veFXS balance
+      * @param _gauge _gauge_addr Gauge which STAX votes for
+      * @param _weight Weight for a gauge in bps (units of 0.01%). Minimal is 0.01%. Ignored if 0
+      */
     function voteGaugeWeight(address _gauge, uint256 _weight) external onlyOwnerOrOpsManager {
         gaugeController.vote_for_gauge_weights(_gauge, _weight);
     }
@@ -123,7 +135,7 @@ contract VeFXSProxy is Ownable {
       * @notice Get the current voting power for STAX, as of now.
       * @return User voting power
       */
-    function balanceOf() external view returns (uint256) {
+    function veFXSBalance() external view returns (uint256) {
         return veFXS.balanceOf(address(this), block.timestamp);
     }
 
@@ -131,7 +143,7 @@ contract VeFXSProxy is Ownable {
       * @notice Calculate total veFXS voting power, as of now.
       * @return Total voting power
       */
-    function totalSupply() external view returns (uint256) {
+    function totalVeFXSSupply() external view returns (uint256) {
         return veFXS.totalSupply(block.timestamp);
     }
 
@@ -148,16 +160,8 @@ contract VeFXSProxy is Ownable {
       * @dev Will revert if no lock has been added yet.
       * @return LockedBalance
       */
-    function locked() external view returns (IVeFXS.LockedBalance memory) {
+    function locked() external view returns (IveFXS.LockedBalance memory) {
         return veFXS.locked(address(this));
-    }
-
-    /** 
-      * @notice Current veFXS supply
-      * @return supply
-      */
-    function supply() external view returns (uint256) {
-        return veFXS.supply();
     }
 
     // recover tokens
@@ -172,8 +176,20 @@ contract VeFXSProxy is Ownable {
         _token.safeTransfer(_to, _amount);
     }
 
+    /**
+      * @dev Allow STAX's veFXS balance in this contract to be used for the gauge boost
+      *      of STAX's liquidity ops contract managing the gauge locks.
+      * @notice gauge.toggleValidVeFXSProxy(address _proxy_addr) needs to be called by Frax Gov first.
+      * @param _gaugeAddress The address of the gauge to whitelist this as a valid proxy
+      * @param _stakerAddress The address of the gauge staking contract (STAX's liquidity ops)
+      */
+    function gaugeProxyToggleStaker(address _gaugeAddress, address _stakerAddress) external onlyOwner {
+      IUnifiedFarm(_gaugeAddress).proxyToggleStaker(_stakerAddress);
+      emit GaugeProxyToggledStaker(_gaugeAddress, _stakerAddress);
+    }
+
     // execute arbitrary functions
-    function execute(address _to, uint256 _value, bytes calldata _data) external onlyOwner  returns (bytes memory) {
+    function execute(address _to, uint256 _value, bytes calldata _data) external onlyOwner returns (bytes memory) {
       (bool success, bytes memory returndata) = _to.call{value: _value}(_data);
       require(success, "Execution failed");
       return returndata;
