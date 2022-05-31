@@ -1,26 +1,17 @@
 import '@nomiclabs/hardhat-ethers';
-import { ethers, network } from 'hardhat';
+import { ethers } from 'hardhat';
 import { GaugeController, GaugeController__factory } from '../../../typechain';
 import {
   deployAndMine,
-  DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
   mine,
+  getDeployedContracts,
 } from '../helpers';
 
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
-
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
+  const DEPLOYED = getDeployedContracts();
   // note: gauge controller for Temple is using rewardRatesManual[] and therefore no need to have a gauge controller for temple
  
   const fxsGaugeControllerFactory = new GaugeController__factory(owner);

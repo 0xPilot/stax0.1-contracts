@@ -1,5 +1,5 @@
 import '@nomiclabs/hardhat-ethers';
-import { ethers, network } from 'hardhat';
+import { ethers } from 'hardhat';
 import { BigNumber, Signer } from 'ethers';
 import { 
   VeFXS, VeFXS__factory,
@@ -7,9 +7,9 @@ import {
 import {
   deployAndMine,
   DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
   mine,
+  getDeployedContracts,
 } from '../helpers';
 
 async function deployVeFXS(DEPLOYED: DeployedContracts, owner: Signer) {
@@ -30,15 +30,8 @@ async function deployVeFXS(DEPLOYED: DeployedContracts, owner: Signer) {
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
+  const DEPLOYED = getDeployedContracts();
 
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
   const rewardTokens = [DEPLOYED.FXS, DEPLOYED.TEMPLE];
   const rewardManagers = [DEPLOYED.MULTISIG, DEPLOYED.MULTISIG];

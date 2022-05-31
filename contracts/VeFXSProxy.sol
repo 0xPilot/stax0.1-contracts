@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-interface IVeFXS {
+interface IveFXS {
     struct LockedBalance {
         int128 amount;
         uint256 end;
@@ -33,7 +33,7 @@ contract VeFXSProxy is Ownable {
     using SafeERC20 for IERC20;
 
     /// @dev The underlying veFXS contract which STAX is locking into.
-    IVeFXS public veFXS;
+    IveFXS public veFXS;
 
     /// @dev The underlying token being locked.
     IERC20 public fxsToken;
@@ -50,7 +50,7 @@ contract VeFXSProxy is Ownable {
     event GaugeProxyToggledStaker(address gaugeAddress, address stakerAddress);
 
     constructor(address _veFXS, address _gaugeController) {
-        veFXS = IVeFXS(_veFXS);
+        veFXS = IveFXS(_veFXS);
         fxsToken = IERC20(veFXS.token());
         gaugeController = IGaugeController(_gaugeController);
     }
@@ -160,7 +160,7 @@ contract VeFXSProxy is Ownable {
       * @dev Will revert if no lock has been added yet.
       * @return LockedBalance
       */
-    function locked() external view returns (IVeFXS.LockedBalance memory) {
+    function locked() external view returns (IveFXS.LockedBalance memory) {
         return veFXS.locked(address(this));
     }
 

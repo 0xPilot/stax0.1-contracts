@@ -1,34 +1,24 @@
 import '@nomiclabs/hardhat-ethers';
-import { ethers, network } from 'hardhat';
-import { RewardsManager, RewardsManager__factory } from '../../../typechain';
+import { ethers } from 'hardhat';
+import { RewardsManager__factory } from '../../../typechain';
 import {
   deployAndMine,
-  DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
-  mine,
+  getDeployedContracts,
 } from '../helpers';
 
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
-
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
+  const DEPLOYED = getDeployedContracts();
 
   const rewardsManagerFactory = new RewardsManager__factory(owner);
-  const rewardsManager: RewardsManager = await deployAndMine(
+  await deployAndMine(
     'RewardsManager', rewardsManagerFactory, rewardsManagerFactory.deploy,
     DEPLOYED.STAX_STAKING
   )
     
-  await mine(rewardsManager.transferOwnership(DEPLOYED.MULTISIG));
+  // Ownership transferred to the msig in 99-post-deploy.ts
 }
 
 // We recommend this pattern to be able to use async/await everywhere

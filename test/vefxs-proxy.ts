@@ -314,20 +314,18 @@ describe("VeFXS Proxy", async () => {
         expect(await fxsToken.balanceOf(await owner.getAddress())).eq(fxsBalBefore.add(amount));
     });
 
-    it.only("owner can execute", async () => {
+    it("owner can execute", async () => {
         const amount = ethers.utils.parseEther("1000");
 
         // Send veFxsProxy some FXS
         await fxsToken.connect(operator).transfer(veFxsProxy.address, amount);
-
-        // NB: If these are working ok, can remove gasLimit overrides.
 
         // Approve veFXS contract to pull out the FXS
         {
             const abi = ERC20__factory.abi;
             const iface = new ethers.utils.Interface(abi);
             const encoded = iface.encodeFunctionData("approve", [veFXS.address, amount]);
-            await veFxsProxy.connect(owner).execute(fxsToken.address, 0, encoded, {gasLimit: 500000});
+            await veFxsProxy.connect(owner).execute(fxsToken.address, 0, encoded);
         }
 
         // Create the lock
@@ -338,14 +336,13 @@ describe("VeFXS Proxy", async () => {
             unlockTime = BigNumber.from(await blockTimestamp()).add(365*86400);
             unlockTime = Math.floor((unlockTime.toNumber()) / WEEK) * WEEK;
             const encoded = iface.encodeFunctionData("create_lock", [amount, unlockTime]);
-            await veFxsProxy.connect(owner).execute(veFXS.address, 0, encoded, {gasLimit: 500000});
+            await veFxsProxy.connect(owner).execute(veFXS.address, 0, encoded);
         }
 
         // verify lock was created
         const locked = await veFxsProxy.locked();
         expect(locked.end).to.eq(unlockTime);
         expect(locked.amount).to.eq(amount);
-
     });
 
     it("misc wrapper views", async () => {

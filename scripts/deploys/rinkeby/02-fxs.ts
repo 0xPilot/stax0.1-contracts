@@ -1,26 +1,17 @@
 import '@nomiclabs/hardhat-ethers';
-import { ethers, network } from 'hardhat';
+import { ethers } from 'hardhat';
 import { StaxLP, StaxLP__factory } from '../../../typechain';
 import {
   deployAndMine,
-  DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
   mine,
+  getDeployedContracts,
 } from '../helpers';
 
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
-
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
+  const DEPLOYED = getDeployedContracts();
 
   const fxsFactory = new StaxLP__factory(owner);
   const FXS: StaxLP = await deployAndMine(

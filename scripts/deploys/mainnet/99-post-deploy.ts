@@ -6,7 +6,6 @@ import {
     StaxLP__factory,
     StaxLPStaking__factory,
     RewardsManager__factory,
-    VeFXSProxy__factory,
 } from '../../../typechain';
 import {
     ensureExpectedEnvvars,
@@ -25,7 +24,6 @@ async function main() {
     const rewardsManager = RewardsManager__factory.connect(DEPLOYED.REWARDS_MANAGER, owner);
     const lockerProxy = LockerProxy__factory.connect(DEPLOYED.LOCKER_PROXY, owner);
     const liquidityOps = LiquidityOps__factory.connect(DEPLOYED.LIQUIDITY_OPS, owner);
-    const veFxsProxy = VeFXSProxy__factory.connect(DEPLOYED.VEFXS_PROXY, owner);
 
     // Add liquidityOps and lockerProxy as xLP minters
     await mine(staxLP.addMinter(lockerProxy.address));
@@ -38,27 +36,23 @@ async function main() {
     await mine(staxLP.transferOwnership(DEPLOYED.MULTISIG));
     await mine(staxLP.revokeRole(adminRole, await owner.getAddress()));
 
-    // Set the staking rewards distributor
+    // Set the staking rewards distributor, and setup the initial reward tokens.
     await mine(staxStaking.setRewardDistributor(DEPLOYED.REWARDS_MANAGER));
+    await mine(staxStaking.addReward(DEPLOYED.FXS));
+    await mine(staxStaking.addReward(DEPLOYED.TEMPLE));
 
-    // Transfer staking ownership to the multisig
-    await mine(staxStaking.transferOwnership(DEPLOYED.MULTISIG));
-
-    // Transfer rewards manager ownership to the multisig
-    await mine(rewardsManager.transferOwnership(DEPLOYED.MULTISIG));
+    // Set the rewards operator to the multisig for now - this may be a keeper in future.
+    await mine(rewardsManager.setOperator(DEPLOYED.MULTISIG));
 
     // Liquidity Ops initial policy / state
     await mine(liquidityOps.setRewardTokens());
     await mine(liquidityOps.setLockParams(80, 100)); // By default: 80% locked in the gauge, 20% in the curve pool
 
-    // Transfer liquidity ops ownership to the multisig
+    // Transfer ownership to the multisig
+    await mine(staxStaking.transferOwnership(DEPLOYED.MULTISIG));
+    await mine(rewardsManager.transferOwnership(DEPLOYED.MULTISIG));
     await mine(liquidityOps.transferOwnership(DEPLOYED.MULTISIG));
-
-    // Transfer locker proxy ownership to the multisig
     await mine(lockerProxy.transferOwnership(DEPLOYED.MULTISIG));
-
-    // Transfer locker proxy ownership to the multisig
-    await mine(veFxsProxy.transferOwnership(DEPLOYED.MULTISIG));
 }
 
 // We recommend this pattern to be able to use async/await everywhere

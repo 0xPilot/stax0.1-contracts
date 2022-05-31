@@ -1,6 +1,6 @@
 import '@nomiclabs/hardhat-ethers';
 import { BigNumber, Signer } from 'ethers';
-import { ethers, network } from 'hardhat';
+import { ethers } from 'hardhat';
 import { 
   CurvePoolStub, CurvePoolStub__factory, 
   FraxUnifiedFarmERC20TempleFRAXTEMPLEMod__factory, FraxUnifiedFarmERC20TempleFRAXTEMPLE__factory, 
@@ -12,9 +12,9 @@ import {
   blockTimestamp,
   deployAndMine,
   DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
   mine,
+  getDeployedContracts,
 } from '../helpers';
 
 
@@ -56,14 +56,16 @@ async function addLiquidity(DEPLOYED: DeployedContracts, owner: Signer) {
     const v2pair = TempleUniswapV2Pair__factory.connect(DEPLOYED.TEMPLE_V2_PAIR, owner);
     // prerequisite: mint and send lp to owner
 
-    // mint, approve some more eth and add liquidity
-    await mine(staxlp.mint(await owner.getAddress(), BigNumber.from(ethers.utils.parseEther("1000"))));
 
-    await mine(staxlp.approve(curvePoolStub.address, BigNumber.from(ethers.utils.parseEther("500"))));
-    await mine(v2pair.approve(curvePoolStub.address, BigNumber.from(ethers.utils.parseEther("500"))));
+    // mint, approve some more eth and add liquidity
+    const amount = ethers.utils.parseEther("15000");
+    await mine(staxlp.mint(await owner.getAddress(), amount));
+
+    await mine(staxlp.approve(curvePoolStub.address, amount));
+    await mine(v2pair.approve(curvePoolStub.address, amount));
 
     const addLiquidityFn = curvePoolStub.functions['add_liquidity(uint256[2],uint256,address)'];
-    await mine(addLiquidityFn([ethers.utils.parseEther("10"), ethers.utils.parseEther("10")], 0, await owner.getAddress()));
+    await mine(addLiquidityFn([amount, amount], 0, await owner.getAddress()));
 }
 
 async function sendFarmRewardsAndSync(DEPLOYED: DeployedContracts, owner: Signer) {
@@ -157,19 +159,11 @@ async function distributeRewards(DEPLOYED: DeployedContracts, owner: Signer) {
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
-
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
+  const DEPLOYED = getDeployedContracts();
 
   //await deployCurvePoolStub2(DEPLOYED, owner);
   //await addLiquidity(DEPLOYED, owner);
-  await addMinters(DEPLOYED, owner);
+  //await addMinters(DEPLOYED, owner);
   //await lockAndStakeLP(DEPLOYED, owner);
   //await applyLiquidity(DEPLOYED, owner);
   //await setOpsParams(DEPLOYED, owner);

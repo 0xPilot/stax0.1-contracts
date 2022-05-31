@@ -1,35 +1,25 @@
 import '@nomiclabs/hardhat-ethers';
 import { BigNumber } from 'ethers';
-import { ethers, network } from 'hardhat';
+import { ethers } from 'hardhat';
 import { CurvePoolStub, CurvePoolStub__factory, StaxLP__factory } from '../../../typechain';
 import {
   deployAndMine,
-  DeployedContracts,
-  DEPLOYED_CONTRACTS,
   ensureExpectedEnvvars,
   mine,
+  getDeployedContracts,
 } from '../helpers';
 
 async function main() {
   ensureExpectedEnvvars();
   const [owner] = await ethers.getSigners();
-
-  let DEPLOYED: DeployedContracts;
-
-  if (DEPLOYED_CONTRACTS[network.name] === undefined) {
-    console.log(`No contracts configured for ${network.name}`)
-    return;
-  } else {
-    DEPLOYED = DEPLOYED_CONTRACTS[network.name];
-  }
-
+  const DEPLOYED = getDeployedContracts();
 
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
   const coins: [string, string, string, string] = [
     DEPLOYED.STAX_TOKEN, DEPLOYED.FXS, //DEPLOYED.TEMPLE_V2_PAIR, // fxs for testing
     ZERO_ADDRESS, ZERO_ADDRESS];
   const A = 50;
-  const fee = 15000000; // 0.15 %
+  const fee = 29400000; // 0.294 %
   const assetType = 3; // 'Other'
   const implementationIndex = 3;
   const rateMultipliers: [BigNumber, BigNumber] = [
