@@ -30,6 +30,9 @@ contract StaxLPStaking is Ownable {
     mapping(address => mapping(address => uint256)) public claimableRewards;
     mapping(address => mapping(address => uint256)) public userRewardPerTokenPaid;
 
+    /// @dev For use when migrating to a new staking contract.
+    address public migrator;
+
     struct Reward {
         uint40 periodFinish;
         uint216 rewardRate;  // The reward amount (1e18) per total reward duration
@@ -39,10 +42,10 @@ contract StaxLPStaking is Ownable {
 
     event RewardAdded(address token, uint256 amount);
     event Staked(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, address rewardToken, uint256 reward);
+    event Withdrawn(address indexed user, address toAddress, uint256 amount);
+    event RewardPaid(address indexed user, address toAddress, address rewardToken, uint256 reward);
     event UpdatedRewardDistributor(address distributor);
-
+    event MigratorSet(address migrator);
 
     constructor(address _stakingToken, address _distributor) {
         stakingToken = IERC20(_stakingToken);
@@ -106,10 +109,7 @@ contract StaxLPStaking is Ownable {
             claimableRewards[_account][_rewardsToken];
     }
 
-    function stake(uint256 _amount)
-        public
-        updateReward(msg.sender)
-    {
+    function stake(uint256 _amount) public updateReward(msg.sender) {
         stakeFor(msg.sender, _amount);
     }
 
@@ -118,69 +118,68 @@ contract StaxLPStaking is Ownable {
         stakeFor(msg.sender, balance);
     }
 
-    function stakeFor(address _for, uint256 _amount)
-        public
-        updateReward(_for)
-    {
-        require(_amount > 0, "RewardPool : Cannot stake 0");
-        // pull tokens
+    function stakeFor(address _for, uint256 _amount) public {
+        require(_amount > 0, "Cannot stake 0");
+        
+        // pull tokens and apply stake
         stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
-        //give to _for
+        _applyStake(_for, _amount);
+    }
+
+    function _applyStake(address _for, uint256 _amount) internal updateReward(_for) {
         _totalSupply += _amount;
         _balances[_for] += _amount;
         emit Staked(_for, _amount);
     }
 
-    function withdraw(uint256 amount, bool claim)
-        public
-        updateReward(msg.sender)
-    {
-        require(amount > 0, "RewardPool : Cannot withdraw 0");
+    function _withdrawFor(address staker, address toAddress,
+                          uint256 amount, bool claimRewards,
+                          address rewardsToAddress) internal updateReward(staker) {
+        require(amount > 0, "Cannot withdraw 0");
+        require(_balances[staker] >= amount, "Not enough staked tokens");
 
         _totalSupply -= amount;
-        _balances[msg.sender] -= amount;
+        _balances[staker] -= amount;
 
-        stakingToken.safeTransfer(msg.sender, amount);
-        emit Withdrawn(msg.sender, amount);
+        stakingToken.safeTransfer(toAddress, amount);
+        emit Withdrawn(staker, toAddress, amount);
      
-        if (claim) {
+        if (claimRewards) {
             // can call internal because user reward already updated
-            _getRewards(msg.sender);
+            _getRewards(staker, rewardsToAddress);
         }
     }
 
-    function withdrawAll(bool claim) external{
-        withdraw(_balances[msg.sender], claim);
+    function withdraw(uint256 amount, bool claim) public {
+        _withdrawFor(msg.sender, msg.sender, amount, claim, msg.sender);
     }
 
-    function getRewards(address _account) public updateReward(_account) {
-        _getRewards(_account);
+    function withdrawAll(bool claim) external {
+        _withdrawFor(msg.sender, msg.sender, _balances[msg.sender], claim, msg.sender);
+    }
+
+    function getRewards(address staker) public updateReward(staker) {
+        _getRewards(staker, staker);
     }
 
     // @dev internal function. make sure to call only after updateReward(account)
-    function _getRewards(address _account) internal {
+    function _getRewards(address staker, address rewardsToAddress) internal {
         for (uint256 i; i < rewardTokens.length; i++) {
-            address _rewardToken = rewardTokens[i];
-            uint256 claimable = claimableRewards[_account][_rewardToken];
-            if (claimable > 0) {
-                claimableRewards[_account][_rewardToken] = 0;
-                IERC20(_rewardToken).safeTransfer(_account, claimable);
-                emit RewardPaid(_account, _rewardToken, claimable);
-            }
+            _getReward(staker, rewardTokens[i], rewardsToAddress);
         }
     }
 
-    function getReward(address _account, address _rewardToken) external updateReward(_account) {
-        _getReward(_account, _rewardToken);
+    function getReward(address staker, address rewardToken) external updateReward(staker) {
+        _getReward(staker, rewardToken, staker);
     }
 
-    function _getReward(address _account, address _rewardToken) internal {
-        uint256 amount = claimableRewards[_account][_rewardToken];
+    function _getReward(address staker, address rewardToken, address rewardsToAddress) internal {
+        uint256 amount = claimableRewards[staker][rewardToken];
         if (amount > 0) {
-            claimableRewards[_account][_rewardToken] = 0;
-            IERC20(_rewardToken).safeTransfer(_account, amount);
+            claimableRewards[staker][rewardToken] = 0;
+            IERC20(rewardToken).safeTransfer(rewardsToAddress, amount);
 
-            emit RewardPaid(_account, _rewardToken, amount);
+            emit RewardPaid(staker, rewardsToAddress, rewardToken, amount);
         }
     }
 
@@ -219,6 +218,43 @@ contract StaxLPStaking is Ownable {
         IERC20(_rewardsToken).safeTransferFrom(msg.sender, address(this), _amount);
 
         emit RewardAdded(_rewardsToken, _amount);
+    }
+
+    function setMigrator(address _migrator) external onlyOwner {
+        migrator = _migrator;
+        emit MigratorSet(_migrator);
+    }
+
+    /**
+      * @notice For migrations to a new staking contract:
+      *         1. User/DApp checks if the user has a balance in the `oldStakingContract`
+      *         2. If yes, user calls this function `newStakingContract.migrateStake(oldStakingContract, balance)`
+      *         3. Staking balances are migrated to the new contract, user will start to earn rewards in the new contract.
+      *         4. Any claimable rewards in the old contract are sent directly to the user's wallet.
+      * @param oldStaking The old staking contract funds are being migrated from.
+      * @param amount The amount to migrate - generally this would be the staker's balance
+      */
+    function migrateStake(address oldStaking, uint256 amount) external {
+        StaxLPStaking(oldStaking).migrateWithdraw(msg.sender, amount);
+        _applyStake(msg.sender, amount);
+    }
+
+    /**
+      * @notice For migrations to a new staking contract.
+      *         1. Withdraw `staker`s tokens to the new staking contract (the migrator)
+      *         2. Any existing rewards are claimed and sent directly to the `staker`
+      * @dev Called only from the new staking contract (the migrator).
+      *      `setMigrator(new_staking_contract)` needs to be called first
+      * @param staker The staker who is being migrated to a new staking contract.
+      * @param amount The amount to migrate - generally this would be the staker's balance
+      */
+    function migrateWithdraw(address staker, uint256 amount) public onlyMigrator {
+        _withdrawFor(staker, msg.sender, amount, true, staker);
+    }
+
+    modifier onlyMigrator() {
+        require(msg.sender == migrator, "not migrator");
+        _;
     }
 
     modifier updateReward(address _account) {

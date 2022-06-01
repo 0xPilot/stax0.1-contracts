@@ -1,7 +1,7 @@
 import { ethers, network } from "hardhat";
 import { Signer, BigNumber } from "ethers";
 import { expect } from "chai";
-import { mineForwardSeconds, shouldThrow, blockTimestamp, ZERO_ADDRESS } from "./helpers";
+import { mineForwardSeconds, shouldThrow, blockTimestamp, ZERO_ADDRESS, toAtto } from "./helpers";
 import { 
     StaxLP, StaxLP__factory,
     LockerProxy, LockerProxy__factory, 
@@ -119,10 +119,12 @@ describe("Staking", async () => {
         }
             
         await liquidityOps.setRewardTokens();
+        await rewardsManager.setOperator(await owner.getAddress());
         await staking.setRewardDistributor(rewardsManager.address);
         await staking.addReward(fxsToken.address);
         await staking.addReward(templeToken.address);
 
+        await liquidityOps.setFarmLockTime(86400 * 7); // 7 days
         await liquidityOps.setLockParams(80, 100);
         await staxLPToken.addMinter(locker.address);
         await staxLPToken.addMinter(liquidityOps.address);
@@ -131,10 +133,84 @@ describe("Staking", async () => {
     it("admin tests", async () => {
         await shouldThrow(staking.connect(ben).setRewardDistributor(await alan.getAddress()), /Ownable: caller is not the owner/)
         await shouldThrow(staking.connect(ben).addReward(fxsToken.address), /Ownable: caller is not the owner/);
+        await shouldThrow(staking.connect(ben).addReward(fxsToken.address), /Ownable: caller is not the owner/);
+        await shouldThrow(staking.connect(ben).setMigrator(await alan.getAddress()), /Ownable: caller is not the owner/);
+        await shouldThrow(staking.migrateWithdraw(await alan.getAddress(), 100), /not migrator/);
 
         // happy paths
         await staking.setRewardDistributor(await ben.getAddress());
         await staking.addReward(staxLPToken.address);
+        await staking.setMigrator(await alan.getAddress());
+    });
+
+    it("should set migrator", async () => {
+        await expect(staking.setMigrator(await alan.getAddress()))
+            .to.emit(staking, "MigratorSet")
+            .withArgs(await alan.getAddress());
+        expect(await staking.migrator()).eq(await alan.getAddress());
+    });
+
+    // impersonate the from address so we can sign the transfer.
+    async function transferAs(token: ERC20, fromAddress: string, toAddress: string, amount: BigNumber) {
+        await network.provider.request({
+            method: "hardhat_impersonateAccount",
+            params: [fromAddress]
+        });
+        const signer = await ethers.getSigner(fromAddress);
+
+        await fxsToken.connect(signer).transfer(toAddress, amount);
+        
+        await network.provider.request({
+            method: "hardhat_stopImpersonatingAccount",
+            params: [fromAddress]
+        });
+    }
+
+    it("staking contracts should migrate", async () => {
+        // Alan locks and stakes in the old contract.
+        const amount = 10000;
+        await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), amount);
+        await v2pair.connect(alan).approve(locker.address, amount);
+        await locker.connect(alan).lock(amount, true);
+        await expect(await staking.balanceOf(await alan.getAddress())).eq(amount);
+        
+        // Transfer 100 FXS to the rewards manager, for distribution.
+        const fxsRewards = toAtto(500);
+        await transferAs(fxsToken, fraxMultisigAddress, rewardsManager.address, fxsRewards);
+        await rewardsManager.distribute(fxsTokenAddress);
+
+        // Fast forward so we have some rewards to claim.
+        await mineForwardSeconds(2 * 86400);
+
+        const fxsEarned = await staking.earned(await alan.getAddress(), fxsToken.address);
+        expect(fxsEarned).gt(0);
+
+        // Create a new contract
+        const newStakingContract = await new StaxLPStaking__factory(owner).deploy(staxLPToken.address, await alan.getAddress());
+
+        // The old staking contract sets the new staking contract as a valid migrator
+        await staking.setMigrator(newStakingContract.address);
+
+        // Can't withdraw more than we have staked
+        await shouldThrow(newStakingContract.connect(alan).migrateStake(staking.address, amount+1, {gasLimit: 500000}), /Not enough staked tokens/);        
+
+        // Now Alan migrates his stake over to the new contract.
+        await expect(newStakingContract.connect(alan).migrateStake(staking.address, amount))
+            .to.emit(newStakingContract, "Staked")
+            .withArgs(await alan.getAddress(), amount);
+
+        // Alan's gets the FXS rewards earnt from the old contract paid directly to him.
+        expect(await fxsToken.balanceOf(await alan.getAddress())).gt(fxsEarned);
+
+        // The old contract has no staked balance or earned rewards
+        expect(await staking.balanceOf(await alan.getAddress())).eq(0);
+        expect(await staking.earned(await alan.getAddress(), fxsToken.address)).eq(0);
+
+        // The new contract has the staked balance
+        expect(await newStakingContract.balanceOf(await alan.getAddress())).eq(amount);
+
+        // And the new staking contract has no rewards yet as nothing has been distributed here.
+        expect(await newStakingContract.earned(await alan.getAddress(), fxsToken.address)).eq(0);
     });
 
     describe("Staking and Rewards", async () => {
@@ -339,9 +415,12 @@ describe("Staking", async () => {
             // after some time, Alan's account should have earned rewards but significantly lesser than previously earned
             expect(await staking.earned(await alan.getAddress(), fxsToken.address)).to.lt(alanFXSEarned);
             expect(await staking.earned(await alan.getAddress(), templeToken.address)).to.lt(alanTempleEarned);
-        
-            // Alan withdraws xlp
+       
+            // Can't withdraw more than we have staked.
             const alanXlpBalBefore = await staxLPToken.balanceOf(await alan.getAddress());
+            await shouldThrow(staking.connect(alan).withdraw(alanXlpStaked.add(1), true), /Not enough staked tokens/);        
+
+            // Alan withdraws xlp
             await staking.connect(alan).withdraw(100, true);
             expect(await staxLPToken.balanceOf(await alan.getAddress())).to.eq(alanXlpBalBefore.add(100));
             await staking.connect(alan).withdrawAll(true);

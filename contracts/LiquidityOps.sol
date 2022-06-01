@@ -61,6 +61,10 @@ contract LiquidityOps is Ownable {
     address public rewardsManager;
     address public feeCollector;
     address public pegDefender;
+    address public operator;
+    
+    // applyLiquidity can be toggled to be permissionless or only callable by an operator.
+    bool public operatorOnlyMode;
 
     // The order of curve pool tokens
     int128 public inputTokenIndex;
@@ -107,6 +111,8 @@ contract LiquidityOps is Ownable {
     event RemovedLiquidityImbalance(uint256 _amount0, uint256 _amounts1, uint256 burnAmount);
     event PegDefenderSet(address defender);
     event FarmLockTimeSet(uint256 secs);
+    event OperatorOnlyModeSet(bool value);
+    event OperatorSet(address operator);
 
     constructor(
         address _lpFarm,
@@ -138,6 +144,9 @@ contract LiquidityOps is Ownable {
 
         // By default, set the lock time to the max (eg 3yrs for TEMPLE/FRAX)
         farmLockTime = lpFarm.lock_time_for_max_multiplier();
+
+        // applyLiquidity is permissionless by default.
+        operatorOnlyMode = false;
     }
 
     function setLockParams(uint128 _numerator, uint128 _denominator) external onlyOwner {
@@ -193,6 +202,16 @@ contract LiquidityOps is Ownable {
     function setPegDefender(address _pegDefender) external onlyOwner {
         pegDefender = _pegDefender;
         emit PegDefenderSet(_pegDefender);
+    }
+
+    function setOperatorOnlyMode(bool _operatorOnlyMode) external onlyOwner {
+        operatorOnlyMode = _operatorOnlyMode;
+        emit OperatorOnlyModeSet(_operatorOnlyMode);
+    }
+
+    function setOperator(address _operator) external onlyOwner {
+        operator = _operator;
+        emit OperatorSet(_operator);
     }
 
     function exchange(
@@ -328,11 +347,13 @@ contract LiquidityOps is Ownable {
     /** 
       * @notice Apply LP held by this contract - locking into the gauge and adding to the curve liquidity pool
       * @dev The ratio of gauge vs liquidity pool is goverend by the lockRate percentage, set by policy.
+      *      It is by default permissionless to call, but may be beneficial to limit how liquidity is deployed
+      *      in the future (by a whitelisted operator)
       * @param _liquidity The amount of LP to apply.
       * @param _minCurveTokenAmount When adding liquidity to the pool, what is the minimum number of tokens
       *        to accept.
       */
-    function applyLiquidity(uint256 _liquidity, uint256 _minCurveTokenAmount) external {
+    function applyLiquidity(uint256 _liquidity, uint256 _minCurveTokenAmount) external onlyOperator {
         require(_liquidity <= lpToken.balanceOf(address(this)), "not enough liquidity");
         (uint256 lockAmount, uint256 addLiquidityAmount) = applyLiquidityAmounts(_liquidity);
 
@@ -459,6 +480,12 @@ contract LiquidityOps is Ownable {
 
     modifier onlyOwnerOrPegDefender {
         require(msg.sender == owner() || msg.sender == pegDefender, "only owner or defender");
+        _;
+    }
+
+    /// @dev Either set to be permissionless, or can only be called by the operator.
+    modifier onlyOperator {
+        require(!operatorOnlyMode || msg.sender == operator, "not operator");
         _;
     }
 }

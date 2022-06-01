@@ -154,6 +154,9 @@ describe("Liquidity Ops", async () => {
             await shouldThrow(liquidityOps.minCurveLiquidityAmountOut(100, 1e10), /invalid slippage/);
             await shouldThrow(liquidityOps.minCurveLiquidityAmountOut(100, 99961e6), /invalid slippage/);  // Fee = 0.04%, so total is 100.01%
 
+            await shouldThrow(liquidityOps.connect(alan).setOperatorOnlyMode(false), /Ownable: caller is not the owner/);
+            await shouldThrow(liquidityOps.connect(alan).setOperator(await frank.getAddress()), /Ownable: caller is not the owner/);
+
             // happy paths
             await liquidityOps.setPegDefender(await frank.getAddress());
             await liquidityOps.setLPFarm(lpFarm.address);
@@ -161,6 +164,8 @@ describe("Liquidity Ops", async () => {
             await liquidityOps.setFeeParams(20, 100);
             await liquidityOps.setRewardsManager(await alan.getAddress());
             await liquidityOps.stakerToggleMigrator(await owner.getAddress());
+            await liquidityOps.setOperatorOnlyMode(false);
+            await liquidityOps.setOperator(await frank.getAddress());
 
             await lpFarm.connect(validProxy).proxyToggleStaker(liquidityOps.address);
             await liquidityOps.setVeFXSProxy(await validProxy.getAddress());
@@ -216,10 +221,6 @@ describe("Liquidity Ops", async () => {
                 .to.emit(liquidityOps, "FarmLockTimeSet")
                 .withArgs(secs);
             expect(await liquidityOps.farmLockTime()).to.eq(secs);
-        });
-
-        it("should toggle migrator for migration", async () => {
-            await liquidityOps.stakerToggleMigrator(await owner.getAddress());
         });
 
         it("should toggle migrator for migration", async () => {
@@ -377,6 +378,40 @@ describe("Liquidity Ops", async () => {
             expect(virtualPriceAfter).to.eq(virtualPriceBefore);
 
             expect(await staxLPToken.totalSupply()).eq(staxLPSupplyBefore2+150+15);
+        });
+
+        it("should set operator", async () => {
+            await expect(liquidityOps.setOperator(await frank.getAddress()))
+                .to.emit(liquidityOps, "OperatorSet")
+                .withArgs(await frank.getAddress());
+            expect(await liquidityOps.operator()).to.eq(await frank.getAddress());
+        });
+
+        it("applyLiquidity in operator only mode", async () => {
+            // Need to add both the locker and liquidity ops as xlp minters
+            await liquidityOps.setLockParams(80, 100);
+            await staxLPToken.addMinter(locker.address);
+            await staxLPToken.addMinter(liquidityOps.address);
+
+            // Get some LP into the liquidity ops.
+            await v2pair.connect(alan).approve(locker.address, 300);
+            await locker.connect(alan).lock(100, false);
+            const minCurveAmountOut = await liquidityOps.minCurveLiquidityAmountOut(100, curveSlippage);
+
+            // Set operator only.
+            await liquidityOps.setOperator(await frank.getAddress());
+            await expect(liquidityOps.setOperatorOnlyMode(true))
+                .to.emit(liquidityOps, "OperatorOnlyModeSet")
+                .withArgs(true);
+
+            // Now fails for anyone other than the operator
+            await shouldThrow(liquidityOps.applyLiquidity(100, minCurveAmountOut), /not operator/);
+
+            await expect(liquidityOps.connect(frank).applyLiquidity(100, minCurveAmountOut))
+                .to.emit(liquidityOps, "Locked")
+                .withArgs(0.8*100);
+                // .to.emit(liquidityOps, "LiquidityAdded")   // Waffle version 3.4.4 can't chain emit's
+                // .withArgs(0.2*100, 0.2*100, 40);
         });
 
         it("removes liquidity", async () => {
