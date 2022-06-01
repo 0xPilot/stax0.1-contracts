@@ -172,7 +172,7 @@ describe("Staking", async () => {
         await v2pair.connect(lpBigHolder).transfer(await alan.getAddress(), amount);
         await v2pair.connect(alan).approve(locker.address, amount);
         await locker.connect(alan).lock(amount, true);
-        await expect(await staking.balanceOf(await alan.getAddress())).eq(amount);
+        expect(await staking.balanceOf(await alan.getAddress())).eq(amount);
         
         // Transfer 100 FXS to the rewards manager, for distribution.
         const fxsRewards = toAtto(500);
@@ -199,7 +199,7 @@ describe("Staking", async () => {
             .to.emit(newStakingContract, "Staked")
             .withArgs(await alan.getAddress(), amount);
 
-        // Alan's gets the FXS rewards earnt from the old contract paid directly to him.
+        // Alan's gets the FXS rewards earned from the old contract paid directly to him.
         expect(await fxsToken.balanceOf(await alan.getAddress())).gt(fxsEarned);
 
         // The old contract has no staked balance or earned rewards
