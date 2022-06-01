@@ -109,7 +109,7 @@ contract StaxLPStaking is Ownable {
             claimableRewards[_account][_rewardsToken];
     }
 
-    function stake(uint256 _amount) public updateReward(msg.sender) {
+    function stake(uint256 _amount) external {
         stakeFor(msg.sender, _amount);
     }
 
@@ -132,9 +132,13 @@ contract StaxLPStaking is Ownable {
         emit Staked(_for, _amount);
     }
 
-    function _withdrawFor(address staker, address toAddress,
-                          uint256 amount, bool claimRewards,
-                          address rewardsToAddress) internal updateReward(staker) {
+    function _withdrawFor(
+        address staker,
+        address toAddress,
+        uint256 amount,
+        bool claimRewards,
+        address rewardsToAddress
+    ) internal updateReward(staker) {
         require(amount > 0, "Cannot withdraw 0");
         require(_balances[staker] >= amount, "Not enough staked tokens");
 
@@ -158,7 +162,7 @@ contract StaxLPStaking is Ownable {
         _withdrawFor(msg.sender, msg.sender, _balances[msg.sender], claim, msg.sender);
     }
 
-    function getRewards(address staker) public updateReward(staker) {
+    function getRewards(address staker) external updateReward(staker) {
         _getRewards(staker, staker);
     }
 
@@ -248,7 +252,7 @@ contract StaxLPStaking is Ownable {
       * @param staker The staker who is being migrated to a new staking contract.
       * @param amount The amount to migrate - generally this would be the staker's balance
       */
-    function migrateWithdraw(address staker, uint256 amount) public onlyMigrator {
+    function migrateWithdraw(address staker, uint256 amount) external onlyMigrator {
         _withdrawFor(staker, msg.sender, amount, true, staker);
     }
 
