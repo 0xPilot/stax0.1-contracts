@@ -34,6 +34,14 @@ npx hardhat run --network mainnet scripts/deploys/mainnet/99-post-deploy.ts
 
 Check through each of the contracts in etherscan and check the read-only params are linked and as expected:
 
+### 4. Trasfer Contracts' ownership
+
+Double check right `mainnet.MULTISIG` address is in `./scripts/deploys/helpers.ts`
+
+```bash
+npx hardhat run --network mainnet scripts/deploys/mainnet/100-transfer-ownership.ts
+```
+
 1. `staxStaking.rewardDistributor` (rewards manager addr)
 1. `staxStaking.rewardTokens` (fxs + temple)
 1. `rewardsManager.operator` (the msig)
