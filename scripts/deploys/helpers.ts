@@ -78,7 +78,8 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
   },
   mainnet: {
     // Existing mainnet contracts
-    MULTISIG: '0x4D6175d58C5AceEf30F546C0d5A557efFa53A950',
+    MULTISIG: '0x8c2D06e11ca4414e00CdEa8f28633A2edAf79499',
+
     FXS: '0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0',
     TEMPLE_V2_PAIR: '0x6021444f1706f15465bEe85463BCc7d7cC17Fc03',
     FRAX_TEMPLE_UNIFIED_FARM: '0x10460d02226d6ef7B2419aE150E6377BdbB7Ef16',
@@ -94,7 +95,7 @@ export const DEPLOYED_CONTRACTS: {[key: string]: DeployedContracts} = {
     REWARDS_MANAGER: '',
     LIQUIDITY_OPS: '',
     LOCKER_PROXY: '',
-    VEFXS_PROXY: '',
+    VEFXS_PROXY: '0xdf291abc418B074CF7Ec304C1608aA5346e4e10B',
 
     // Unused in mainnet deploy:
     TEMP_REWARD_DISTRIBUTOR: '',

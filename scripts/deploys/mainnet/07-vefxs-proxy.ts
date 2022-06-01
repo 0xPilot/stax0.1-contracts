@@ -20,9 +20,7 @@ async function main() {
     DEPLOYED.FXS_GAUGE_CONTROLLER
   );
 
-  // DAO Deployooor
-  const veFXSProxyMsig = "0x4D6175d58C5AceEf30F546C0d5A557efFa53A950";
-  await mine(veFxsProxy.transferOwnership(veFXSProxyMsig));
+  await mine(veFxsProxy.transferOwnership(DEPLOYED.MULTISIG));
 }
 
 // We recommend this pattern to be able to use async/await everywhere
