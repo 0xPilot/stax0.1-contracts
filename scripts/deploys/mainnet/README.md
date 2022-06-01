@@ -47,13 +47,6 @@ Check through each of the contracts in etherscan and check the read-only params 
 
 Head to etherscan and check the A & fee params match, poke around a bit.
 
-### 4. Update owner to msig
-
-Triple confirm which msig to use, and update `DEPLOYED_CONTRACTS[mainnet][MULTISIG]` in `./scripts/deploys/helpers.ts`
-
-```bash
-npx hardhat run --network mainnet scripts/deploys/mainnet/99-post-deploy.ts
-```
 
 ## 2. MASTERS: Seed Curve Pool
 
