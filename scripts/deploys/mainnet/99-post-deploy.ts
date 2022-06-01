@@ -28,13 +28,9 @@ async function main() {
     // Add liquidityOps and lockerProxy as xLP minters
     await mine(staxLP.addMinter(lockerProxy.address));
     await mine(staxLP.addMinter(liquidityOps.address));
-    
-    // Transfer xLP ownership to the multisig
-    // Grant the msig the admin role (so it can then add/remove minters), and remove admin from the old owner.
-    const adminRole = await staxLP.getRoleAdmin(await staxLP.CAN_MINT());
-    await mine(staxLP.grantRole(adminRole, DEPLOYED.MULTISIG));
-    await mine(staxLP.transferOwnership(DEPLOYED.MULTISIG));
-    await mine(staxLP.revokeRole(adminRole, await owner.getAddress()));
+
+    // The msig is added as a valid minter, in order to seed the xLP/LP curve pool.
+    await mine(staxLP.addMinter(DEPLOYED.MULTISIG));
 
     // Set the staking rewards distributor, and setup the initial reward tokens.
     await mine(staxStaking.setRewardDistributor(DEPLOYED.REWARDS_MANAGER));
@@ -48,12 +44,7 @@ async function main() {
     await mine(liquidityOps.setRewardTokens());
     await mine(liquidityOps.setLockParams(70, 100));      // By default: 70% locked in the gauge, 30% in the curve pool
     await mine(liquidityOps.setFarmLockTime(86400*182));  // By default: Set to 6 month lock time.
-
-    // Transfer ownership to the multisig
-    await mine(staxStaking.transferOwnership(DEPLOYED.MULTISIG));
-    await mine(rewardsManager.transferOwnership(DEPLOYED.MULTISIG));
-    await mine(liquidityOps.transferOwnership(DEPLOYED.MULTISIG));
-    await mine(lockerProxy.transferOwnership(DEPLOYED.MULTISIG));
+    await mine(liquidityOps.setPegDefender(DEPLOYED.MULTISIG)); // Manual via the msig until we implement a contract to auto-handle.
 }
 
 // We recommend this pattern to be able to use async/await everywhere
