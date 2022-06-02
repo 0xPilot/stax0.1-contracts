@@ -12,7 +12,7 @@
     1. `setFarmLockTime()` -- to roughly equal `[Sat Dec 17 2022 00:00:00 GMT+0000] - now()`
         1. Such that it's a couple of days before the FXS halvening. This is to work out a strategy of what we want to do with the new year.
 1. Update the msig in `./scripts/deploys/helpers.ts`
-    1. `DEPLOYED_CONTRACTS[mainnet][MULTISIG]`
+    1. `DEPLOYED_CONTRACTS[mainnet][MULTISIG]` == `0x8c2D06e11ca4414e00CdEa8f28633A2edAf79499`
 
 ### 2. Run Deploy Scripts
 
@@ -55,7 +55,7 @@ npx hardhat run --network mainnet scripts/deploys/mainnet/100-transfer-ownership
 
 Head to etherscan and check the A & fee params match, poke around a bit.
 
-## 2. MASTERS: Seed Curve Pool
+## 2. MASTERS/MSIG: Seed Curve Pool
 
 Pre-requisites:
 
@@ -66,44 +66,54 @@ Pre-requisites:
 Actions:
 
 1. Mint the equal amount of xLP:
-    1. xLP token: `mint(multisig_address, seedAmount x 10e18)`
+    1. NB: `seedAmount_1e18` notation just means the seedAmount, in 1e18 format. eg 5 million (5e6) == 5e24
+    1. xLP token: `mint(multisig_address, seedAmount_1e18)`
 1. Approve xLP and LP:
-    1. xLP token: `approve(curve_pool_address, seedAmount x 10e18)`
-    1. LP token: `approve(curve_pool_address, seedAmount x 10e18)`
+    1. xLP token: `approve(curve_pool_address, seedAmount_1e18)`
+    1. LP token: `approve(curve_pool_address, seedAmount_1e18)`
 1. Add Liquidity:
     1. NB: Note - given it's the first deposit, so we don't check for slippage. 
     1. NB: The msig will receive the resulting curve liquidity token
-    1. Curve Pool: `add_liquidity([seedAmount x 10e18, seedAmount x 10e18], minExpected, multisig_address)`
-        1. Where `minExpected = 0.99 x 2 x seedAmount x 10e18`, ie 99% of the LP we should get as the first depositor.
+    1. Curve Pool: `add_liquidity([seedAmount_1e18, seedAmount_1e18], minExpected, multisig_address)`
+        1. Where `minExpected = 0.99 x 2 x seedAmount_1e18`, ie 99% of the LP we should get as the first depositor.
 
 Verify:
 
 1. Check the curve pool reserves on etherscan
-1. Get a quote from the LockerProxy contract - it should be 1:1 (minus fee) `buyFromAmmQuote(1e18)`
+1. Get a quote from the LockerProxy contract - it should be 1:1 (minus fee) `buyFromAmmQuote(liquidity_1e18)`
 
 Should all be done now -- get a kind soul to smoke test for real using the STAX UI.
 
-## 3. MASTERS: Operations
+## 3. Operations
 
 Until we have good automation - most things are manual via the msig.
 
-### Apply Liquidity
+### STAX TEAM: Apply Liquidity
+
+*FREQUENCY*: DAILY or as required (when there is sufficient idle user LP in liquidity ops contract)
+
+TODO: Agree who's going to run with this. On the first few days/weeks it should be monitored closely.
 
 When users lock LP, it sits in liqudity ops. This needs to be 'applied' (according to policy%) into the gauge and curve pool.
 
+Note: This is permissionless - so anyone in the team can call it (but can be toggled later to be only via an operator).
+Note: For STAX v1, we may add mechanics to incentivise anyone who calls it to get extra STAX emissions.
+
 1. Check the liqudity ops contract for the balance of how much LP it holds.
-1. `liquidityOps.minCurveLiquidityAmountOut(liquidity x 10e18, modelSlippage)`
+1. `liquidityOps.minCurveLiquidityAmountOut(liquidity_1e18, modelSlippage)`
     1. Gets the amount of curve liqudity tokens we expect when depositing policy% into the curve pool.
     1. `modelSlippage` This function is an approximation (curve docs), so recommended to add 0.5% model slippage.
         1. 1e10 precision, so 0.5% = 5e7. 1% = 1e8
-1. `liquidityOps.applyLiquidity(liquidity x 10e18, minCurveTokenAmount)`
+1. `liquidityOps.applyLiquidity(liquidity_1e18, minCurveTokenAmount)`
     1. `minCurveTokenAmount` Use the amount calculated above.
 
-### Weekly Rewards Distribution
+### MASTERS/MSIG: Rewards Distribution
 
-Automation will be setup using keeper soon after launch...but until then this needs to be done weekly.
+*FREQUENCY*: DAILY to start, then WEEKLY when automated.
 
-TODO: Agree on a time that we commit to distributing each week until that's implemented.
+Automation will be setup using keeper soon after launch...but it's best to be done daily such that it gets baked in as a process for the team (and then doesn't matter so much if it's missed once or twice)
+
+TODO: Agree who's going to run with this. On the first few days/weeks it should be monitored closely.
 
 1. Take note of the APR in the UI - it will change when we distribute new rewards.
 1. Pull claimable rewards from the gauge: `liquidityOps.getReward()`
@@ -111,7 +121,9 @@ TODO: Agree on a time that we commit to distributing each week until that's impl
 1. Distribute rewards so users can start claiming: `rewardsManager.notifyRewardAmount()`
 1. Compare the APR now - it would have updated (although also updates due to $USD prices & total xLP staked - so just a guide)
 
-### Peg Defense
+### MASTERS/MSIG: Peg Defense
+
+*FREQUENCY*: AS REQUIRED
 
 These functions exist in liquidity ops to help bolster the peg:
 
@@ -124,12 +136,17 @@ These functions exist in liquidity ops to help bolster the peg:
 1. `liquditityOps.recoverToken(address _token, address _to, uint256 _amount)`
     1. Send any tokens which liquidityOps holds to another contract - eg LP/xLP after swapping, etc.
 
-### Policy Settings
+### MASTERS/MSIG: Policy Settings
 
-1. `setLockParams(uint128 _numerator, uint128 _denominator)`
+*FREQUENCY*: AS REQUIRED
+
+1. `liquidityOps.setLockParams(uint128 _numerator, uint128 _denominator)`
     1. The percentage of how much we are locking in the gauge, vs adding to curve liquidity
-1. `setFeeParams(uint128 _numerator, uint128 _denominator)`
+1. `liquidityOps.setFeeParams(uint128 _numerator, uint128 _denominator)`
     1. How much fees we take out of the gauge rewards, before passing the rest onto the user.
     1. NB: If non-zero, also consider setting the fee collector (the msig owner by default)
-1. `setFarmLockTime(uint256 _secs)`
+1. `liquidityOps.setFarmLockTime(uint256 _secs)`
     1. Change the duration of the lock in the guage.
+1. `liquidityOps.setOperatorOnlyMode(bool _operatorOnlyMode)`
+    1. Set so `liquidityOps.applyLiquidity()` can only be called by a whitelisted operator - eg when we want greater control over gauge/curve pool.
+    1. Note: `setOperator()` needs to be called first.
