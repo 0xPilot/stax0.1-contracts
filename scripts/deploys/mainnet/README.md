@@ -6,7 +6,7 @@
 
 1. Update `02-curve-pool.ts`:
     1. Confirm the curve pool settings:
-        1. `A`=40, `fee`=??
+        1. `A`=40, `fee`=29400000 (0.294%)
 1. Update `99-post-deploy.ts` for
     1. `setLockParams` -- confirm 70/30 split
     1. `setFarmLockTime()` -- to roughly equal `[Sat Dec 17 2022 00:00:00 GMT+0000] - now()`
@@ -34,14 +34,6 @@ npx hardhat run --network mainnet scripts/deploys/mainnet/99-post-deploy.ts
 
 Check through each of the contracts in etherscan and check the read-only params are linked and as expected:
 
-### 4. Trasfer Contracts' ownership
-
-Double check right `mainnet.MULTISIG` address is in `./scripts/deploys/helpers.ts`
-
-```bash
-npx hardhat run --network mainnet scripts/deploys/mainnet/100-transfer-ownership.ts
-```
-
 1. `staxStaking.rewardDistributor` (rewards manager addr)
 1. `staxStaking.rewardTokens` (fxs + temple)
 1. `rewardsManager.operator` (the msig)
@@ -51,10 +43,17 @@ npx hardhat run --network mainnet scripts/deploys/mainnet/100-transfer-ownership
 1. `liquidityOps.farmLockTime` (~Dec 17th 2022 - current_time)
 1. `liquidityOps.pegDefender` (the msig)
 
-### 4. Verify Curve Pool
+### 4. Trasfer Contracts' ownership
+
+Double check right `mainnet.MULTISIG` address is in `./scripts/deploys/helpers.ts`
+
+```bash
+npx hardhat run --network mainnet scripts/deploys/mainnet/100-transfer-ownership.ts
+```
+
+### 5. Verify Curve Pool
 
 Head to etherscan and check the A & fee params match, poke around a bit.
-
 
 ## 2. MASTERS: Seed Curve Pool
 
@@ -74,7 +73,8 @@ Actions:
 1. Add Liquidity:
     1. NB: Note - given it's the first deposit, so we don't check for slippage. 
     1. NB: The msig will receive the resulting curve liquidity token
-    1. Curve Pool: `add_liquidity([seedAmount, seedAmount], 0, multisig_address)`
+    1. Curve Pool: `add_liquidity([seedAmount x 10e18, seedAmount x 10e18], minExpected, multisig_address)`
+        1. Where `minExpected = 0.99 x 2 x seedAmount x 10e18`, ie 99% of the LP we should get as the first depositor.
 
 Verify:
 
@@ -92,11 +92,11 @@ Until we have good automation - most things are manual via the msig.
 When users lock LP, it sits in liqudity ops. This needs to be 'applied' (according to policy%) into the gauge and curve pool.
 
 1. Check the liqudity ops contract for the balance of how much LP it holds.
-1. `liquidityOps.minCurveLiquidityAmountOut(liquidity, modelSlippage)`
+1. `liquidityOps.minCurveLiquidityAmountOut(liquidity x 10e18, modelSlippage)`
     1. Gets the amount of curve liqudity tokens we expect when depositing policy% into the curve pool.
     1. `modelSlippage` This function is an approximation (curve docs), so recommended to add 0.5% model slippage.
         1. 1e10 precision, so 0.5% = 5e7. 1% = 1e8
-1. `liquidityOps.applyLiquidity(liquidity, minCurveTokenAmount)`
+1. `liquidityOps.applyLiquidity(liquidity x 10e18, minCurveTokenAmount)`
     1. `minCurveTokenAmount` Use the amount calculated above.
 
 ### Weekly Rewards Distribution

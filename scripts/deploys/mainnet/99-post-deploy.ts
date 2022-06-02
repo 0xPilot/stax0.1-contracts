@@ -43,7 +43,7 @@ async function main() {
     // Liquidity Ops initial policy / state
     await mine(liquidityOps.setRewardTokens());
     await mine(liquidityOps.setLockParams(70, 100));      // By default: 70% locked in the gauge, 30% in the curve pool
-    await mine(liquidityOps.setFarmLockTime(86400*182));  // By default: Set to 6 month lock time.
+    await mine(liquidityOps.setFarmLockTime(16930800));   // ~approx 16th-17th Dec 2022 -- just before FXS halvening
     await mine(liquidityOps.setPegDefender(DEPLOYED.MULTISIG)); // Manual via the msig until we implement a contract to auto-handle.
 }
 

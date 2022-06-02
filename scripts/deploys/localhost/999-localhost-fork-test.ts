@@ -121,7 +121,7 @@ async function main() {
   // Seed the curve pool if empty
   if (curveBalancesBefore[0].eq(0) && curveBalancesBefore[1].eq(0)) {
     console.log("\nTemple multisig is seeding the curve pool...");
-    const seedAmount = ethers.utils.parseEther("1");
+    const seedAmount = ethers.utils.parseEther("1234.1234");
 
     // Temporarily grant the msig the minter role, and mint new xlp   
     await mine(staxlp.addMinter(await templeMultisig.getAddress()));
@@ -140,6 +140,7 @@ async function main() {
     const addLiquidityFn = curvePool.functions['add_liquidity(uint256[2],uint256,address)'];
     await mine(addLiquidityFn([seedAmount, seedAmount], 0, await templeMultisig.getAddress()));
     console.log("Curve Pool Balances:", await curvePool.get_balances());
+    console.log("Curve Liqudity Token Balance:", await curvePool.balanceOf(templeMultisig.address));
   }
 
   const fredLPBal = await v2pair.balanceOf(await fred.getAddress());
